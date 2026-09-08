@@ -1,0 +1,795 @@
+/* =============================================================
+   書架 — 蔵書目録  (offline-first PWA)
+   すべてのデータは localStorage に保管し、共有はURLかJSONで行う。
+   ============================================================= */
+'use strict';
+
+const KEY = 'shoka.library.v1';
+const $  = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+/* ---------- 状態 ---------- */
+let state = { works: [], settings: { tategaki: false, size: 17 } };
+let query = '';
+let deferredInstall = null;
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      state.works = Array.isArray(parsed.works) ? parsed.works.map(normalize) : [];
+      state.settings = Object.assign(state.settings, parsed.settings || {});
+    }
+  } catch (e) { console.warn('蔵書の読み込みに失敗しました', e); }
+}
+
+function save() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ works: state.works, settings: state.settings, savedAt: Date.now() }));
+  } catch (e) {
+    toast('保管に失敗しました（容量超過かもしれません）');
+    console.error(e);
+  }
+}
+
+function normalize(w) {
+  return {
+    id: w.id || uid(),
+    title: (w.title || '無題').trim(),
+    series: (w.series || '').trim(),
+    order: (w.order === 0 || w.order) ? Number(w.order) : null,
+    summary: (w.summary || '').trim(),
+    author: (w.author || '').trim(),
+    tags: Array.isArray(w.tags) ? w.tags.filter(Boolean) : String(w.tags || '').split(/[,、\s]+/).filter(Boolean),
+    body: w.body || '',
+    createdAt: w.createdAt || Date.now(),
+    updatedAt: w.updatedAt || w.createdAt || Date.now()
+  };
+}
+
+const uid = () => 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+/* ---------- 小道具 ---------- */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+}
+function countChars(s) { return (s || '').replace(/\s/g, '').length; }
+function fmtCount(n) { return n >= 10000 ? (n / 10000).toFixed(1) + '万字' : n + '字'; }
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+}
+
+function hue(str) {
+  let h = 0;
+  for (const ch of String(str)) h = (h * 31 + ch.codePointAt(0)) % 360;
+  return h;
+}
+function spineColor(str, i) {
+  const h = (hue(str) + i * 37) % 360;
+  const palette = [
+    'hsl(' + ((h % 40) + 10) + ' 42% 30%)',
+    'hsl(' + ((h % 30) + 90) + ' 26% 27%)',
+    'hsl(' + ((h % 20) + 350) + ' 38% 32%)',
+    'hsl(' + ((h % 25) + 35) + ' 45% 38%)'
+  ];
+  return palette[(hue(str) + i) % palette.length];
+}
+
+/* ---------- 本文の組版 ---------- */
+function renderBody(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let buf = [];
+
+  const flush = () => {
+    if (!buf.length) return;
+    out.push('<p>' + buf.map(inline).join('<br>') + '</p>');
+    buf = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line.trim()) { flush(); continue; }
+    let m;
+    if ((m = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/))) {
+      flush();
+      const tag = m[1].length <= 2 ? 'h3' : 'h4';
+      out.push(`<${tag}>${inline(m[2])}</${tag}>`);
+      continue;
+    }
+    if (/^\s*([-*_＊＝]\s*){3,}$/.test(line) || /^[＊*]{3}$/.test(line.trim())) {
+      flush(); out.push('<hr>'); continue;
+    }
+    buf.push(line.replace(/^\s+/, ''));
+  }
+  flush();
+  return out.join('\n') || '<p class="hint">（本文はまだありません）</p>';
+}
+
+function inline(s) {
+  let t = esc(s);
+  // 強調
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // 青空文庫式ルビ： ｜漢字《かんじ》 / 漢字《かんじ》
+  t = t.replace(/[｜|]([^｜|《]{1,20})《([^》]{1,20})》/g, '<ruby>$1<rt>$2</rt></ruby>');
+  t = t.replace(/([々一-鿿゠-ヿ぀-ゟ]{1,12})《([^》]{1,20})》/g, '<ruby>$1<rt>$2</rt></ruby>');
+  return t;
+}
+
+/* ---------- 並び替え ---------- */
+function sortInSeries(a, b) {
+  const ao = a.order, bo = b.order;
+  if (ao != null && bo != null && ao !== bo) return ao - bo;
+  if (ao != null && bo == null) return -1;
+  if (ao == null && bo != null) return 1;
+  return a.createdAt - b.createdAt;
+}
+function groups() {
+  const map = new Map();
+  const singles = [];
+  for (const w of state.works) {
+    if (w.series) {
+      if (!map.has(w.series)) map.set(w.series, []);
+      map.get(w.series).push(w);
+    } else singles.push(w);
+  }
+  for (const arr of map.values()) arr.sort(sortInSeries);
+  const series = Array.from(map.entries())
+    .map(([name, works]) => ({ name, works, updatedAt: Math.max(...works.map(w => w.updatedAt)) }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  singles.sort((a, b) => b.updatedAt - a.updatedAt);
+  return { series, singles };
+}
+
+function matches(w, q) {
+  if (!q) return true;
+  const hay = [w.title, w.series, w.summary, w.author, w.tags.join(' '), w.body].join('\n').toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t));
+}
+
+/* =============================================================
+   画面
+   ============================================================= */
+const view = () => $('#view');
+
+function route() {
+  const h = location.hash.replace(/^#/, '');
+  if (h.startsWith('/w/'))      return renderReader(decodeURIComponent(h.slice(3)));
+  if (h.startsWith('/series/')) return renderSeries(decodeURIComponent(h.slice(8)));
+  if (h.startsWith('/edit/'))   return renderEditor(decodeURIComponent(h.slice(6)));
+  if (h === '/new')             return renderEditor(null);
+  if (h === '/archive')         return renderArchive();
+  return renderShelf();
+}
+
+function go(path) { location.hash = path; }
+
+/* ---------- 書架 ---------- */
+function renderShelf() {
+  const v = view();
+  updateStat();
+
+  if (query) return renderSearch();
+
+  if (!state.works.length) {
+    v.innerHTML = `
+      <div class="empty">
+        <div class="mark">❦</div>
+        <h2>棚はまだ空のままです</h2>
+        <p>「＋ 収蔵する」から作品を納めてください。<br>
+        Claude との会話で書いた小説は、そのまま貼り付けて取り込めます。<br>
+        いちど収めた本は、この端末の中で電波がなくても読めます。</p>
+        <div class="form-actions" style="justify-content:center;margin-top:22px">
+          <button class="btn primary" onclick="location.hash='/new'">最初の一冊を納める</button>
+          <button class="btn ghost" onclick="location.hash='/archive'">書庫（取り込み・書き出し）</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const { series, singles } = groups();
+  let html = '';
+
+  if (series.length) {
+    html += `<div class="section-head"><h2>連 作 の 棚</h2><span class="count">${series.length} series</span></div>`;
+    html += '<div class="shelf">' + series.map(seriesCard).join('') + '</div><div class="shelf-board"></div>';
+  }
+  if (singles.length) {
+    html += `<div class="section-head"><h2>単 巻 の 棚</h2><span class="count">${singles.length} volumes</span></div>`;
+    html += '<div class="shelf">' + singles.map(w => workCard(w)).join('') + '</div><div class="shelf-board"></div>';
+  }
+  v.innerHTML = html;
+  bindCards();
+}
+
+function seriesCard(s) {
+  const spines = s.works.slice(0, 12).map((w, i) =>
+    `<span class="spine" style="height:${26 + (hue(w.title) % 18)}px;background:${spineColor(s.name, i)}"></span>`).join('');
+  const summary = s.works.find(w => w.summary)?.summary || '';
+  return `
+    <button class="card series" data-go="/series/${encodeURIComponent(s.name)}">
+      <span class="card-kicker">series &middot; 全${s.works.length}話</span>
+      <span class="card-title">${esc(s.name)}</span>
+      <span class="spines" aria-hidden="true">${spines}</span>
+      ${summary ? `<span class="card-summary">${esc(summary)}</span>` : ''}
+      <span class="card-meta"><span>最終更新 ${fmtDate(s.updatedAt)}</span><span>${fmtCount(s.works.reduce((n, w) => n + countChars(w.body), 0))}</span></span>
+    </button>`;
+}
+
+function workCard(w, kicker) {
+  return `
+    <button class="card" data-go="/w/${encodeURIComponent(w.id)}">
+      <span class="card-kicker">${esc(kicker || (w.series ? w.series : '単巻'))}</span>
+      <span class="card-title">${esc(w.title)}</span>
+      ${w.summary ? `<span class="card-summary">${esc(w.summary)}</span>` : ''}
+      <span class="card-meta">
+        <span>${fmtDate(w.updatedAt)}</span>
+        <span>${fmtCount(countChars(w.body))}</span>
+        ${w.tags.slice(0, 3).map(t => `<span class="tag">${esc(t)}</span>`).join('')}
+      </span>
+    </button>`;
+}
+
+function bindCards() {
+  $$('[data-go]').forEach(el => el.addEventListener('click', () => go(el.dataset.go)));
+}
+
+function renderSearch() {
+  const hits = state.works.filter(w => matches(w, query))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  view().innerHTML = `
+    <div class="section-head"><h2>検 索 目 録</h2><span class="count">「${esc(query)}」に ${hits.length} 件</span></div>
+    ${hits.length
+      ? '<div class="shelf">' + hits.map(w => workCard(w)).join('') + '</div><div class="shelf-board"></div>'
+      : '<div class="empty"><div class="mark">❦</div><h2>該当する蔵書はありません</h2></div>'}`;
+  bindCards();
+}
+
+/* ---------- シリーズ（目次） ---------- */
+function renderSeries(name) {
+  const works = state.works.filter(w => w.series === name).sort(sortInSeries);
+  if (!works.length) return go('/');
+  const total = works.reduce((n, w) => n + countChars(w.body), 0);
+  const lede = works.find(w => w.summary)?.summary || '';
+
+  view().innerHTML = `
+    <div class="breadcrumb"><button data-go="/">書架</button> ／ 連作</div>
+    <div class="plate">
+      <div class="stamp">蔵書<br>SERIES</div>
+      <h1>${esc(name)}</h1>
+      ${lede ? `<p class="lede">${esc(lede)}</p>` : ''}
+      <p class="meta">全 ${works.length} 話 &middot; ${fmtCount(total)} &middot; 最終更新 ${fmtDate(Math.max(...works.map(w => w.updatedAt)))}</p>
+    </div>
+    <div class="section-head"><h2>目 次</h2><span class="count">contents</span></div>
+    <ul class="toc">
+      ${works.map((w, i) => `
+        <li><button data-go="/w/${encodeURIComponent(w.id)}">
+          <span class="num">${w.order != null ? '第' + w.order + '話' : String(i + 1).padStart(2, '0')}</span>
+          <span class="ttl">${esc(w.title)}</span>
+          <span class="sub">${fmtCount(countChars(w.body))}</span>
+        </button></li>`).join('')}
+    </ul>
+    <div class="form-actions" style="margin-top:22px">
+      <button class="btn" onclick="location.hash='/new'">この連作に続きを納める</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="share-series">この連作を共有URLにする</button>
+    </div>`;
+  bindCards();
+  $('#share-series').addEventListener('click', () => shareDialog(works, name));
+}
+
+/* ---------- 閲覧 ---------- */
+function renderReader(id) {
+  const w = state.works.find(x => x.id === id);
+  if (!w) return go('/');
+  const sib = w.series ? state.works.filter(x => x.series === w.series).sort(sortInSeries) : [w];
+  const idx = sib.findIndex(x => x.id === w.id);
+  const prev = sib[idx - 1], next = sib[idx + 1];
+  const t = state.settings.tategaki;
+
+  view().innerHTML = `
+    <div class="breadcrumb">
+      <button data-go="/">書架</button> ／
+      ${w.series ? `<button data-go="/series/${encodeURIComponent(w.series)}">${esc(w.series)}</button> ／ ` : ''}
+      閲覧
+    </div>
+    <div class="reader-bar">
+      <button class="chip" id="tate" aria-pressed="${t}">縦書き</button>
+      <button class="chip" id="smaller">小</button>
+      <button class="chip" id="bigger">大</button>
+      <span class="spacer"></span>
+      <button class="chip" data-go="/edit/${encodeURIComponent(w.id)}">手を入れる</button>
+      <button class="chip" id="share-one">共有URL</button>
+    </div>
+    <article class="paper">
+      ${w.series ? `<div class="byline">${esc(w.series)}${w.order != null ? ' ・ 第' + w.order + '話' : ''}</div>` : ''}
+      <h1 class="title">${esc(w.title)}</h1>
+      <div class="byline">${w.author ? esc(w.author) + ' &middot; ' : ''}${fmtDate(w.updatedAt)} &middot; ${fmtCount(countChars(w.body))}</div>
+      ${w.summary ? `<div class="divider"></div><p class="card-summary" style="-webkit-line-clamp:99;font-size:14px">${esc(w.summary)}</p>` : ''}
+      <div class="divider"></div>
+      <div class="body ${t ? 'tategaki' : ''}" id="bodyEl" style="--reading-size:${state.settings.size}px">${renderBody(w.body)}</div>
+    </article>
+    <div class="form-actions" style="margin-top:20px">
+      ${prev ? `<button class="btn ghost" data-go="/w/${encodeURIComponent(prev.id)}">◀ ${esc(prev.title)}</button>` : ''}
+      <span class="spacer"></span>
+      ${next ? `<button class="btn ghost" data-go="/w/${encodeURIComponent(next.id)}">${esc(next.title)} ▶</button>` : ''}
+    </div>`;
+  bindCards();
+
+  $('#tate').addEventListener('click', () => {
+    state.settings.tategaki = !state.settings.tategaki; save(); renderReader(id);
+  });
+  $('#bigger').addEventListener('click', () => {
+    state.settings.size = Math.min(28, state.settings.size + 1); save();
+    $('#bodyEl').style.setProperty('--reading-size', state.settings.size + 'px');
+  });
+  $('#smaller').addEventListener('click', () => {
+    state.settings.size = Math.max(12, state.settings.size - 1); save();
+    $('#bodyEl').style.setProperty('--reading-size', state.settings.size + 'px');
+  });
+  $('#share-one').addEventListener('click', () => shareDialog([w], w.title));
+
+  const b = $('#bodyEl');
+  if (state.settings.tategaki) {
+    b.scrollLeft = b.scrollWidth;
+    // 縦書きでは、縦のホイール操作をそのまま行送りに変える
+    b.addEventListener('wheel', ev => {
+      if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+      ev.preventDefault();
+      b.scrollLeft -= ev.deltaY;
+    }, { passive: false });
+  }
+  window.scrollTo(0, 0);
+}
+
+/* ---------- 編集 ---------- */
+function renderEditor(id) {
+  const w = id ? state.works.find(x => x.id === id) : null;
+  if (id && !w) return go('/');
+  const seriesNames = Array.from(new Set(state.works.map(x => x.series).filter(Boolean)));
+
+  view().innerHTML = `
+    <div class="breadcrumb"><button data-go="/">書架</button> ／ ${w ? '改訂' : '収蔵'}</div>
+    <div class="plate">
+      <div class="stamp">${w ? '改訂<br>REVISED' : '受入<br>ACCESSION'}</div>
+      <h1>${w ? '蔵書に手を入れる' : '新しい蔵書を納める'}</h1>
+      <p class="meta">題名と本文だけでも構いません。あらすじと連作名を入れておくと、棚がきれいに揃います。</p>
+    </div>
+    <form class="form" id="f">
+      <div class="field">
+        <label for="f-title">題　名</label>
+        <input id="f-title" value="${esc(w?.title || '')}" placeholder="例：灯台守の最後の手紙" required>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-series">連作名（シリーズ）</label>
+          <input id="f-series" list="series-list" value="${esc(w?.series || '')}" placeholder="単発ならば空欄のまま">
+          <datalist id="series-list">${seriesNames.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+        </div>
+        <div class="field">
+          <label for="f-order">連作内の順番（第◯話）</label>
+          <input id="f-order" type="number" inputmode="numeric" value="${w?.order ?? ''}" placeholder="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-summary">あ ら す じ</label>
+        <textarea id="f-summary" rows="3" placeholder="棚に並んだときに見える紹介文">${esc(w?.summary || '')}</textarea>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-author">著者・筆名</label>
+          <input id="f-author" value="${esc(w?.author || '')}" placeholder="任意">
+        </div>
+        <div class="field">
+          <label for="f-tags">分類票（タグ）</label>
+          <input id="f-tags" value="${esc((w?.tags || []).join('、'))}" placeholder="幻想、書簡体、短編">
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-body">本　文</label>
+        <textarea id="f-body" rows="18" placeholder="ここに本文を貼り付けます。&#10;&#10;空行で段落、# で見出し、漢字《かんじ》でルビが振れます。">${esc(w?.body || '')}</textarea>
+        <span class="hint">空行＝段落／「#」「##」＝見出し／「---」＝区切り／「漢字《かんじ》」＝ルビ／「**強調**」＝強調</span>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn primary">${w ? '改訂して納める' : '書架に納める'}</button>
+        <button type="button" class="btn ghost" data-go="${w ? '/w/' + encodeURIComponent(w.id) : '/'}">やめる</button>
+        <span class="spacer"></span>
+        ${w ? '<button type="button" class="btn danger" id="del">除　籍</button>' : ''}
+      </div>
+    </form>`;
+  bindCards();
+
+  $('#f').addEventListener('submit', e => {
+    e.preventDefault();
+    const orderRaw = $('#f-order').value.trim();
+    const data = {
+      id: w?.id,
+      title: $('#f-title').value.trim() || '無題',
+      series: $('#f-series').value.trim(),
+      order: orderRaw === '' ? null : Number(orderRaw),
+      summary: $('#f-summary').value.trim(),
+      author: $('#f-author').value.trim(),
+      tags: $('#f-tags').value.split(/[,、\s]+/).filter(Boolean),
+      body: $('#f-body').value,
+      createdAt: w?.createdAt,
+      updatedAt: Date.now()
+    };
+    const rec = normalize(data);
+    if (w) state.works[state.works.findIndex(x => x.id === w.id)] = rec;
+    else state.works.push(rec);
+    save();
+    toast(w ? '改訂しました' : '書架に納めました');
+    go('/w/' + encodeURIComponent(rec.id));
+  });
+
+  if (w) $('#del').addEventListener('click', () => {
+    confirmDialog('この蔵書を除籍しますか', `「${w.title}」を書架から取り除きます。取り消せません。`, () => {
+      state.works = state.works.filter(x => x.id !== w.id);
+      save(); toast('除籍しました'); go('/');
+    });
+  });
+}
+
+/* =============================================================
+   書庫（取り込み・書き出し・共有）
+   ============================================================= */
+function renderArchive() {
+  const { series, singles } = groups();
+  view().innerHTML = `
+    <div class="breadcrumb"><button data-go="/">書架</button> ／ 書庫</div>
+    <div class="plate">
+      <div class="stamp">書庫<br>ARCHIVE</div>
+      <h1>書　庫</h1>
+      <p class="meta">蔵書 ${state.works.length} 冊（連作 ${series.length} ／ 単巻 ${singles.length}） &middot; 総計 ${fmtCount(state.works.reduce((n, w) => n + countChars(w.body), 0))}</p>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <h3>取 り 込 み</h3>
+        <p>Claude との会話で書いた小説を、そのまま貼り付けてください。本文でも、書き出したJSONでも、共有URLでも受け付けます。</p>
+        <div class="btnrow">
+          <button class="btn primary" id="imp-paste">貼り付けて取り込む</button>
+          <button class="btn" id="imp-file">JSONファイルから取り込む</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>書 き 出 し</h3>
+        <p>書架ごとJSONに保存しておけば、別の端末や新しいブラウザでも同じ棚を組み直せます。</p>
+        <div class="btnrow">
+          <button class="btn" id="exp-json">JSONで保存する</button>
+          <button class="btn" id="exp-url">書架まるごとの共有URLを作る</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Claude に 渡 す 覚 書</h3>
+        <p>下の文をチャットに貼っておくと、Claude がこの書架に取り込める形で小説を書き出してくれます。</p>
+        <div class="mono" id="promptText">${esc(CLAUDE_PROMPT)}</div>
+        <div class="btnrow" style="margin-top:10px">
+          <button class="btn ghost" id="copy-prompt">この覚書を写す</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>始 末</h3>
+        <p>この端末に保管された蔵書をすべて消します。書き出しを済ませてからどうぞ。</p>
+        <div class="btnrow"><button class="btn danger" id="wipe">書架を空にする</button></div>
+      </div>
+    </div>`;
+  bindCards();
+
+  $('#imp-paste').addEventListener('click', () => importDialog());
+  $('#imp-file').addEventListener('click', importFile);
+  $('#exp-json').addEventListener('click', exportJSON);
+  $('#exp-url').addEventListener('click', () => shareDialog(state.works, '書架まるごと'));
+  $('#copy-prompt').addEventListener('click', () => copy(CLAUDE_PROMPT, '覚書を写しました'));
+  $('#wipe').addEventListener('click', () => {
+    confirmDialog('書架を空にしますか', 'この端末の蔵書がすべて失われます。取り消せません。', () => {
+      state.works = []; save(); toast('書架を空にしました'); go('/');
+    });
+  });
+}
+
+const CLAUDE_PROMPT = `これまで書いた小説を、次のJSON形式だけで出力してください（説明文なし・コードブロック内）。
+{"works":[{"title":"題名","series":"連作名(なければ空文字)","order":1,"summary":"あらすじ","tags":["タグ"],"body":"本文。段落は空行、見出しは # 、ルビは 漢字《かんじ》"}]}`;
+
+/* ---------- 取り込み ---------- */
+function importDialog(prefill) {
+  const el = dialog(`
+    <h3>貼り付けて取り込む</h3>
+    <p>小説の本文、書き出したJSON、共有URLのいずれでも構いません。</p>
+    <div class="field">
+      <textarea id="imp-text" rows="10" placeholder="ここに貼り付けます">${esc(prefill || '')}</textarea>
+    </div>
+    <div class="field">
+      <label style="display:flex;gap:8px;align-items:center;font-family:var(--sans);cursor:pointer">
+        <input type="checkbox" id="imp-split" style="width:auto"> 本文中の「##」見出しごとに、別の話として分ける
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" id="imp-ok">取り込む</button>
+      <button class="btn ghost" data-close>やめる</button>
+    </div>`);
+  $('#imp-ok', el).addEventListener('click', async () => {
+    const text = $('#imp-text', el).value.trim();
+    if (!text) return;
+    const split = $('#imp-split', el).checked;
+    try {
+      const works = await parseImport(text, split);
+      if (!works.length) return toast('取り込めるものが見つかりませんでした');
+      mergeWorks(works);
+      closeDialog();
+      toast(works.length + ' 件を取り込みました');
+      go('/');
+      render();
+    } catch (e) { console.error(e); toast('取り込みに失敗しました'); }
+  });
+}
+
+async function parseImport(text, split) {
+  // 1) 共有URL / 共有コード
+  const m = text.match(/#import=([A-Za-z0-9_\-]+)/) || (/^[01][A-Za-z0-9_\-]{20,}$/.test(text.trim()) ? [null, text.trim()] : null);
+  if (m) {
+    const data = await decodePayload(m[1]);
+    if (data?.works) return data.works.map(normalize);
+  }
+  // 2) JSON
+  const jsonSrc = extractJSON(text);
+  if (jsonSrc) {
+    try {
+      const data = JSON.parse(jsonSrc);
+      const arr = Array.isArray(data) ? data : (data.works || (data.title ? [data] : null));
+      if (arr) return arr.map(normalize);
+    } catch (e) { /* 本文として扱う */ }
+  }
+  // 3) 素の本文
+  return parseProse(text, split);
+}
+
+function extractJSON(text) {
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const src = (fence ? fence[1] : text).trim();
+  if (src.startsWith('{') || src.startsWith('[')) return src;
+  const i = src.search(/[{[]/);
+  if (i >= 0 && /"(works|title|body)"/.test(src)) return src.slice(i);
+  return null;
+}
+
+function parseProse(text, split) {
+  const clean = text.replace(/\r\n?/g, '\n').replace(/```[a-z]*\n?/g, '').trim();
+  const lines = clean.split('\n');
+  let seriesTitle = '', start = 0;
+  const h1 = lines.findIndex(l => /^#\s+\S/.test(l));
+  if (h1 === 0) { seriesTitle = lines[0].replace(/^#\s+/, '').trim(); start = 1; }
+
+  const rest = lines.slice(start).join('\n').trim();
+
+  if (split) {
+    const parts = rest.split(/\n(?=##\s+)/).map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      return parts.map((p, i) => {
+        const t = p.match(/^##\s+(.*)$/m);
+        return normalize({
+          title: t ? t[1].trim() : `第${i + 1}話`,
+          series: seriesTitle,
+          order: i + 1,
+          body: p.replace(/^##\s+.*$/m, '').trim(),
+          createdAt: Date.now() + i
+        });
+      });
+    }
+  }
+  const title = seriesTitle || (rest.match(/^##\s+(.*)$/m)?.[1] || rest.split('\n')[0] || '無題').slice(0, 60).trim();
+  return [normalize({ title, body: seriesTitle ? rest : rest, createdAt: Date.now() })];
+}
+
+function mergeWorks(works) {
+  for (const w of works) {
+    const i = state.works.findIndex(x => x.id === w.id);
+    if (i >= 0) state.works[i] = w; else state.works.push(w);
+  }
+  save();
+}
+
+function importFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.txt,.md,application/json,text/plain';
+  input.addEventListener('change', async () => {
+    const f = input.files?.[0];
+    if (!f) return;
+    const text = await f.text();
+    const works = await parseImport(text, false);
+    if (!works.length) return toast('取り込めるものが見つかりませんでした');
+    mergeWorks(works);
+    toast(works.length + ' 件を取り込みました');
+    render();
+  });
+  input.click();
+}
+
+/* ---------- 書き出し ---------- */
+function exportJSON() {
+  const blob = new Blob([JSON.stringify({ works: state.works, exportedAt: new Date().toISOString() }, null, 2)],
+    { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `書架_${fmtDate(Date.now()).replace(/\./g, '')}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('JSONを書き出しました');
+}
+
+/* ---------- 共有URL（gzip + base64url をハッシュに載せる） ---------- */
+const b64u = {
+  enc(bytes) {
+    let s = '';
+    for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+  dec(str) {
+    const s = str.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(s + '==='.slice((s.length + 3) % 4));
+    return Uint8Array.from(bin, c => c.charCodeAt(0));
+  }
+};
+
+async function encodePayload(obj) {
+  const json = JSON.stringify(obj);
+  const bytes = new TextEncoder().encode(json);
+  if (typeof CompressionStream === 'function') {
+    const cs = new CompressionStream('gzip');
+    const buf = await new Response(new Blob([bytes]).stream().pipeThrough(cs)).arrayBuffer();
+    return '1' + b64u.enc(new Uint8Array(buf));
+  }
+  return '0' + b64u.enc(bytes);
+}
+
+async function decodePayload(payload) {
+  const flag = payload[0];
+  const bytes = b64u.dec(payload.slice(1));
+  if (flag === '1') {
+    const ds = new DecompressionStream('gzip');
+    const buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+    return JSON.parse(new TextDecoder().decode(buf));
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function shareDialog(works, label) {
+  const payload = await encodePayload({ v: 1, works });
+  const base = location.origin + location.pathname;
+  const url = base + '#import=' + payload;
+  const long = url.length > 12000;
+
+  const el = dialog(`
+    <h3>共有URL — ${esc(label)}</h3>
+    <p>このURLの中に本文そのものが入っています。チャットや自分宛のメモに貼っておけば、開くだけで書架に戻せます。${long ? '<br><strong>※ 長すぎて一部の場所に貼れないことがあります。JSON書き出しの併用をおすすめします。</strong>' : ''}</p>
+    <div class="mono" id="urlbox">${esc(url)}</div>
+    <p style="margin-top:8px">${works.length} 件 &middot; ${url.length.toLocaleString()} 文字</p>
+    <div class="form-actions">
+      <button class="btn primary" id="cp">URLを写す</button>
+      <button class="btn ghost" id="cp2">JSONを写す</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" data-close>閉じる</button>
+    </div>`);
+  $('#cp', el).addEventListener('click', () => copy(url, 'URLを写しました'));
+  $('#cp2', el).addEventListener('click', () => copy(JSON.stringify({ works }, null, 1), 'JSONを写しました'));
+}
+
+async function copy(text, msg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(msg || '写しました');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    toast(msg || '写しました');
+  }
+}
+
+/* =============================================================
+   ダイアログ
+   ============================================================= */
+function dialog(html) {
+  const layer = $('#dialog-layer');
+  layer.innerHTML = `<div class="overlay"><div class="modal">${html}</div></div>`;
+  const overlay = $('.overlay', layer);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeDialog(); });
+  $$('[data-close]', layer).forEach(b => b.addEventListener('click', closeDialog));
+  document.addEventListener('keydown', escClose);
+  return layer;
+}
+function closeDialog() {
+  $('#dialog-layer').innerHTML = '';
+  document.removeEventListener('keydown', escClose);
+}
+function escClose(e) { if (e.key === 'Escape') closeDialog(); }
+
+function confirmDialog(title, msg, onOk) {
+  const el = dialog(`
+    <h3>${esc(title)}</h3>
+    <p>${esc(msg)}</p>
+    <div class="form-actions">
+      <button class="btn danger" id="ok">はい</button>
+      <button class="btn ghost" data-close>いいえ</button>
+    </div>`);
+  $('#ok', el).addEventListener('click', () => { closeDialog(); onOk(); });
+}
+
+/* =============================================================
+   起動
+   ============================================================= */
+function updateStat() {
+  const n = state.works.length;
+  const c = state.works.reduce((s, w) => s + countChars(w.body), 0);
+  $('#stat').textContent = n ? `蔵書 ${n} 冊 ・ ${fmtCount(c)}` : '蔵書 0 冊';
+}
+
+function render() { route(); updateStat(); }
+
+async function handleImportHash() {
+  const m = location.hash.match(/^#import=([A-Za-z0-9_\-]+)$/);
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search + '#/');
+  try {
+    const data = await decodePayload(m[1]);
+    const works = (data.works || []).map(normalize);
+    if (!works.length) return false;
+    const known = works.filter(w => state.works.some(x => x.id === w.id)).length;
+    confirmDialog(
+      'このURLに蔵書が入っています',
+      `${works.length} 件（${works.map(w => w.title).slice(0, 3).join('、')}${works.length > 3 ? ' ほか' : ''}）を書架に納めますか。${known ? `うち ${known} 件は同じ蔵書として上書きされます。` : ''}`,
+      () => { mergeWorks(works); toast(works.length + ' 件を納めました'); render(); }
+    );
+    return true;
+  } catch (e) {
+    console.error(e);
+    toast('URLの中身を読み取れませんでした');
+    return false;
+  }
+}
+
+function init() {
+  load();
+  $('#btn-new').addEventListener('click', () => go('/new'));
+  $('#btn-archive').addEventListener('click', () => go('/archive'));
+  $('#search').addEventListener('input', e => {
+    query = e.target.value.trim();
+    if (location.hash && location.hash !== '#/' && location.hash !== '') { location.hash = '/'; }
+    else renderShelf();
+  });
+  window.addEventListener('hashchange', () => {
+    if (location.hash.startsWith('#import=')) { handleImportHash(); return; }
+    render();
+  });
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault(); deferredInstall = e; $('#btn-install').hidden = false;
+  });
+  $('#btn-install').addEventListener('click', async () => {
+    if (!deferredInstall) return;
+    deferredInstall.prompt();
+    await deferredInstall.userChoice;
+    deferredInstall = null; $('#btn-install').hidden = true;
+  });
+
+  handleImportHash().then(handled => { if (!handled) render(); else updateStat(); });
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW登録に失敗', e));
+    });
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);

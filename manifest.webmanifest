@@ -1,0 +1,23 @@
+{
+  "name": "書架 — 蔵書目録",
+  "short_name": "書架",
+  "description": "Claudeとの会話で書いた小説を納めておく、オフラインでも読める私設図書館。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ece0c8",
+  "theme_color": "#3b2c1d",
+  "lang": "ja",
+  "dir": "ltr",
+  "categories": ["books", "productivity"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "収蔵する", "short_name": "収蔵", "url": "./#/new" },
+    { "name": "書庫", "short_name": "書庫", "url": "./#/archive" }
+  ]
+}

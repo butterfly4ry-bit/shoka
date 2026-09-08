@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>書架 — 蔵書目録</title>
+<meta name="description" content="オフラインでも読める、私設図書館のような小説書架。">
+<meta name="theme-color" content="#3b2c1d">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="書架">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#/" title="書架へ戻る">
+      <span class="brand-mark" aria-hidden="true">❦</span>
+      <span class="brand-text">
+        <span class="brand-name">書　架</span>
+        <span class="brand-sub">PRIVATE&nbsp;LIBRARY&nbsp;&middot;&nbsp;蔵書目録</span>
+      </span>
+    </a>
+    <div class="topbar-tools">
+      <label class="search">
+        <span class="search-icon" aria-hidden="true">🔍</span>
+        <input id="search" type="search" placeholder="題名・あらすじ・本文を探す" autocomplete="off" spellcheck="false">
+      </label>
+      <button class="btn" id="btn-new">＋ 収蔵する</button>
+      <button class="btn ghost" id="btn-archive">書庫</button>
+    </div>
+  </div>
+  <div class="rule" aria-hidden="true"></div>
+</header>
+
+<main id="view" class="view"></main>
+
+<footer class="footer">
+  <span id="stat" class="stat"></span>
+  <span class="footer-sep">·</span>
+  <span>すべての蔵書はこの端末の中に保管されます</span>
+  <button class="linkbtn" id="btn-install" hidden>この書架を端末に置く</button>
+</footer>
+
+<div id="dialog-layer"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="./app.js"></script>
+</body>
+</html>
