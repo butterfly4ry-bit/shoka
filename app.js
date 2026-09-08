@@ -20,6 +20,7 @@ function load() {
       const parsed = JSON.parse(raw);
       state.works = Array.isArray(parsed.works) ? parsed.works.map(normalize) : [];
       state.settings = Object.assign(state.settings, parsed.settings || {});
+      if (state.settings.shelfMode === 'timeline') state.settings.shelfMode = 'world';
     }
   } catch (e) { console.warn('蔵書の読み込みに失敗しました', e); }
 }
@@ -39,8 +40,9 @@ function normalize(w) {
     title: (w.title || '無題').trim(),
     series: (w.series || '').trim(),
     order: (w.order === 0 || w.order) ? Number(w.order) : null,
-    timeline: (w.timeline || '').trim(),
-    chrono: (w.chrono === 0 || w.chrono) ? Number(w.chrono) : null,
+    world: (w.world || w.timeline || '').trim(),
+    kind: (w.kind || '').trim(),
+    pos: pickNum(w.pos, w.chrono),
     summary: (w.summary || '').trim(),
     author: (w.author || '').trim(),
     tags: Array.isArray(w.tags) ? w.tags.filter(Boolean) : String(w.tags || '').split(/[,、\s]+/).filter(Boolean),
@@ -48,6 +50,21 @@ function normalize(w) {
     createdAt: w.createdAt || Date.now(),
     updatedAt: w.updatedAt || w.createdAt || Date.now()
   };
+}
+
+function pickNum(...vals) {
+  for (const v of vals) if (v === 0 || (v != null && v !== '')) return Number(v);
+  return null;
+}
+
+const KINDS = ['本編', '後日談', '番外編', '外伝'];
+
+// 区分の並び順：本編 → 後日談 → 番外編 → 外伝 → 自分で付けた区分 → その他
+function kindOrder(keys) {
+  const known = KINDS.filter(k => keys.includes(k));
+  const mine = keys.filter(k => !KINDS.includes(k) && k !== 'その他');
+  const last = keys.includes('その他') ? ['その他'] : [];
+  return [...known, ...mine, ...last];
 }
 
 const uid = () => 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -137,9 +154,9 @@ function sortInSeries(a, b) {
   if (ao == null && bo != null) return 1;
   return a.createdAt - b.createdAt;
 }
-function chronoSort(a, b) {
-  const av = a.chrono != null ? a.chrono : a.order;
-  const bv = b.chrono != null ? b.chrono : b.order;
+function posSort(a, b) {
+  const av = a.pos != null ? a.pos : a.order;
+  const bv = b.pos != null ? b.pos : b.order;
   if (av != null && bv != null && av !== bv) return av - bv;
   if (av != null && bv == null) return -1;
   if (av == null && bv != null) return 1;
@@ -162,26 +179,45 @@ function groups() {
   return { series, singles };
 }
 
-function timelineGroups() {
-  const map = new Map();
+// 一つの叢書を「区分ごとの束」に分ける（本編・後日談・番外編…）
+function worldSections(name) {
+  const buckets = new Map();
+  for (const w of state.works) {
+    if (w.world !== name) continue;
+    const k = w.kind || '本編';
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(w);
+  }
+  for (const arr of buckets.values()) arr.sort(posSort);
+  return kindOrder(Array.from(buckets.keys())).map(k => ({ kind: k, works: buckets.get(k) }));
+}
+
+// 叢書の中を、本編から後日談へと通して読む並び
+function worldSequence(name) {
+  return worldSections(name).flatMap(sec => sec.works);
+}
+
+function worldGroups() {
+  const names = [];
   const rest = [];
   for (const w of state.works) {
-    if (w.timeline) {
-      if (!map.has(w.timeline)) map.set(w.timeline, []);
-      map.get(w.timeline).push(w);
-    } else rest.push(w);
+    if (w.world) { if (!names.includes(w.world)) names.push(w.world); }
+    else rest.push(w);
   }
-  for (const arr of map.values()) arr.sort(chronoSort);
-  const lines = Array.from(map.entries())
-    .map(([name, works]) => ({ name, works, updatedAt: Math.max(...works.map(w => w.updatedAt)) }))
+  const worlds = names
+    .map(name => {
+      const sections = worldSections(name);
+      const works = sections.flatMap(sec => sec.works);
+      return { name, sections, works, updatedAt: Math.max(...works.map(w => w.updatedAt)) };
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt);
   rest.sort((a, b) => b.updatedAt - a.updatedAt);
-  return { lines, rest };
+  return { worlds, rest };
 }
 
 function matches(w, q) {
   if (!q) return true;
-  const hay = [w.title, w.series, w.timeline, w.summary, w.author, w.tags.join(' '), w.body].join('\n').toLowerCase();
+  const hay = [w.title, w.series, w.world, w.kind, w.summary, w.author, w.tags.join(' '), w.body].join('\n').toLowerCase();
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t));
 }
 
@@ -194,7 +230,7 @@ function route() {
   const h = location.hash.replace(/^#/, '');
   if (h.startsWith('/w/'))      return renderReader(decodeURIComponent(h.slice(3)));
   if (h.startsWith('/series/')) return renderSeries(decodeURIComponent(h.slice(8)));
-  if (h.startsWith('/t/'))      return renderTimeline(decodeURIComponent(h.slice(3)));
+  if (h.startsWith('/g/'))      return renderWorld(decodeURIComponent(h.slice(3)));
   if (h.startsWith('/edit/'))   return renderEditor(decodeURIComponent(h.slice(6)));
   if (h === '/new')             return renderEditor(null);
   if (h === '/archive')         return renderArchive();
@@ -226,28 +262,29 @@ function renderShelf() {
     return;
   }
 
-  const mode = state.settings.shelfMode === 'timeline' ? 'timeline' : 'series';
+  const mode = state.settings.shelfMode === 'world' ? 'world' : 'series';
   let html = `
     <div class="shelf-modes">
       <span class="modes-label">棚の並べ方</span>
       <button class="chip" data-mode="series" aria-pressed="${mode === 'series'}">連作・単巻</button>
-      <button class="chip" data-mode="timeline" aria-pressed="${mode === 'timeline'}">時間軸（年表）</button>
+      <button class="chip" data-mode="world" aria-pressed="${mode === 'world'}">叢書（まとまり）</button>
     </div>`;
 
-  if (mode === 'timeline') {
-    const { lines, rest } = timelineGroups();
-    if (lines.length) {
-      html += sectionHead('年 表 の 棚', lines.length + ' chronicles');
-      html += shelfOf(lines.map(timelineCard));
+  if (mode === 'world') {
+    const { worlds, rest } = worldGroups();
+    if (worlds.length) {
+      html += sectionHead('叢 書 の 棚', worlds.length + ' collections');
+      html += shelfOf(worlds.map(worldCard));
     } else {
-      html += `<div class="section-head"><h2>年 表 の 棚</h2><span class="count">まだ一つも</span></div>
-        <p class="note">蔵書を開いて「手を入れる」から、<strong>時間軸（年表）</strong>に同じ名前を入れると、
-        連作をまたいで一つの年表にまとまります。<br>
-        <strong>時系列の位置</strong>に数を入れると、その順に並びます。本編の第二話と第三話のあいだの番外編なら
-        <strong>2.5</strong>、ずっと昔の話なら <strong>0</strong> や <strong>-1</strong> のように。</p>`;
+      html += `<div class="section-head"><h2>叢 書 の 棚</h2><span class="count">まだ一つも</span></div>
+        <p class="note">蔵書を開いて「手を入れる」から、<strong>叢書（まとまり）</strong>に同じ名前を入れると、
+        連作をまたいで一つの叢書にまとまります。本編の物語と、そのあとの村の話や、増えていったお祭りの話——
+        離れた場所で起きる後日談も、同じ名前を入れておけば一つの棚に揃います。<br>
+        <strong>区分</strong>に「本編」「後日談」「番外編」などを入れておくと、叢書の中がその見出しで分かれます
+        （空欄なら本編として扱います）。</p>`;
     }
     if (rest.length) {
-      html += sectionHead('年表に載せていない蔵書', rest.length + ' volumes');
+      html += sectionHead('叢書に入れていない蔵書', rest.length + ' volumes');
       html += shelfOf(rest.map(w => workCard(w)));
     }
   } else {
@@ -294,14 +331,14 @@ function seriesCard(s) {
     </button>`;
 }
 
-function timelineCard(t) {
-  const preview = t.works.slice(0, 4).map(w => `
-    <span><span class="pos">${w.chrono != null ? esc(String(w.chrono)) : (w.order != null ? esc(String(w.order)) : '—')}</span><span class="nm">${esc(w.title)}</span></span>`).join('');
+function worldCard(t) {
+  const rows = t.sections.map(sec => `
+    <span><span class="pos">${esc(sec.kind)}</span><span class="nm">${esc(sec.works[0].title)}${sec.works.length > 1 ? ' ほか' + (sec.works.length - 1) + '編' : ''}</span></span>`).join('');
   return `
-    <button class="card chronicle" data-go="/t/${encodeURIComponent(t.name)}">
-      <span class="card-kicker">chronicle &middot; 全${t.works.length}編</span>
+    <button class="card omnibus" data-go="/g/${encodeURIComponent(t.name)}">
+      <span class="card-kicker">collection &middot; 全${t.works.length}編</span>
       <span class="card-title">${esc(t.name)}</span>
-      <span class="chrono-mini">${preview}${t.works.length > 4 ? '<span><span class="pos"></span><span class="nm">ほか' + (t.works.length - 4) + '編</span></span>' : ''}</span>
+      <span class="chrono-mini">${rows}</span>
       <span class="card-meta"><span>最終更新 ${fmtDate(t.updatedAt)}</span><span>${fmtCount(t.works.reduce((n, w) => n + countChars(w.body), 0))}</span></span>
     </button>`;
 }
@@ -368,48 +405,50 @@ function renderSeries(name) {
   $('#share-series').addEventListener('click', () => shareDialog(works, name));
 }
 
-/* ---------- 年表 ---------- */
-function renderTimeline(name) {
-  const works = state.works.filter(w => w.timeline === name).sort(chronoSort);
+/* ---------- 叢書（まとまり） ---------- */
+function renderWorld(name) {
+  const sections = worldSections(name);
+  const works = sections.flatMap(sec => sec.works);
   if (!works.length) return go('/');
   const total = works.reduce((n, w) => n + countChars(w.body), 0);
   const lede = works.find(w => w.summary)?.summary || '';
 
   view().innerHTML = `
-    <div class="breadcrumb"><button data-go="/">書架</button> ／ 年表</div>
+    <div class="breadcrumb"><button data-go="/">書架</button> ／ 叢書</div>
     <div class="plate">
-      <div class="stamp">年表<br>CHRONICLE</div>
+      <div class="stamp">叢書<br>COLLECTION</div>
       <h1>${esc(name)}</h1>
       ${lede ? `<p class="lede">${esc(lede)}</p>` : ''}
-      <p class="meta">全 ${works.length} 編 &middot; ${fmtCount(total)} &middot; 最終更新 ${fmtDate(Math.max(...works.map(w => w.updatedAt)))}</p>
+      <p class="meta">全 ${works.length} 編 &middot; ${sections.map(sec => esc(sec.kind) + ' ' + sec.works.length).join(' ／ ')} &middot; ${fmtCount(total)}</p>
     </div>
-    <div class="section-head"><h2>時 系 列</h2><span class="count">chronology</span></div>
-    <ul class="toc chrono">
-      ${works.map(w => `
-        <li><button data-go="/w/${encodeURIComponent(w.id)}">
-          <span class="num">${w.chrono != null ? esc(String(w.chrono)) : '—'}</span>
-          <span class="stack-t">
-            <span class="ttl">${esc(w.title)}</span>
-            <span class="sub-inline">${w.series ? esc(w.series) + (w.order != null ? ' 第' + w.order + '話' : '') : '単巻'} &middot; ${fmtCount(countChars(w.body))}</span>
-          </span>
-        </button></li>`).join('')}
-    </ul>
-    <div class="form-actions" style="margin-top:22px">
-      <button class="btn" onclick="location.hash='/new'">この年表に一編を加える</button>
+    ${sections.map(sec => `
+      <div class="section-head sub"><h2>${esc(sec.kind)}</h2><span class="count">${sec.works.length} 編</span></div>
+      <ul class="toc">
+        ${sec.works.map((w, i) => `
+          <li><button data-go="/w/${encodeURIComponent(w.id)}">
+            <span class="num">${w.order != null ? '第' + w.order + '話' : (w.pos != null ? esc(String(w.pos)) : String(i + 1).padStart(2, '0'))}</span>
+            <span class="stack-t">
+              <span class="ttl">${esc(w.title)}</span>
+              <span class="sub-inline">${w.series ? esc(w.series) : '単巻'} &middot; ${fmtCount(countChars(w.body))}</span>
+            </span>
+          </button></li>`).join('')}
+      </ul>`).join('')}
+    <div class="form-actions" style="margin-top:24px">
+      <button class="btn" onclick="location.hash='/new'">この叢書に一編を加える</button>
       <span class="spacer"></span>
-      <button class="btn ghost" id="share-timeline">この年表を共有URLにする</button>
+      <button class="btn ghost" id="share-world">この叢書を共有URLにする</button>
     </div>`;
   bindCards();
-  $('#share-timeline').addEventListener('click', () => shareDialog(works, name));
+  $('#share-world').addEventListener('click', () => shareDialog(works, name));
 }
 
 /* ---------- 閲覧 ---------- */
 function renderReader(id) {
   const w = state.works.find(x => x.id === id);
   if (!w) return go('/');
-  const useTL = state.settings.shelfMode === 'timeline' && w.timeline;
-  const sib = useTL
-    ? state.works.filter(x => x.timeline === w.timeline).sort(chronoSort)
+  const useWorld = state.settings.shelfMode === 'world' && w.world;
+  const sib = useWorld
+    ? worldSequence(w.world)
     : (w.series ? state.works.filter(x => x.series === w.series).sort(sortInSeries) : [w]);
   const idx = sib.findIndex(x => x.id === w.id);
   const prev = sib[idx - 1], next = sib[idx + 1];
@@ -418,8 +457,8 @@ function renderReader(id) {
   view().innerHTML = `
     <div class="breadcrumb">
       <button data-go="/">書架</button> ／
-      ${useTL
-        ? `<button data-go="/t/${encodeURIComponent(w.timeline)}">${esc(w.timeline)}</button> ／ `
+      ${useWorld
+        ? `<button data-go="/g/${encodeURIComponent(w.world)}">${esc(w.world)}</button> ／ `
         : (w.series ? `<button data-go="/series/${encodeURIComponent(w.series)}">${esc(w.series)}</button> ／ ` : '')}
       閲覧
     </div>
@@ -427,7 +466,7 @@ function renderReader(id) {
       <button class="chip" id="tate" aria-pressed="${t}">縦書き</button>
       <button class="chip" id="smaller">小</button>
       <button class="chip" id="bigger">大</button>
-      ${w.timeline ? `<button class="chip" data-go="/t/${encodeURIComponent(w.timeline)}">年表：${esc(w.timeline)}${w.chrono != null ? '（' + esc(String(w.chrono)) + '）' : ''}</button>` : ''}
+      ${w.world ? `<button class="chip" data-go="/g/${encodeURIComponent(w.world)}">叢書：${esc(w.world)}${w.kind ? '（' + esc(w.kind) + '）' : ''}</button>` : ''}
       <span class="spacer"></span>
       <button class="chip" data-go="/edit/${encodeURIComponent(w.id)}">手を入れる</button>
       <button class="chip" id="share-one">共有URL</button>
@@ -478,7 +517,8 @@ function renderEditor(id) {
   const w = id ? state.works.find(x => x.id === id) : null;
   if (id && !w) return go('/');
   const seriesNames = Array.from(new Set(state.works.map(x => x.series).filter(Boolean)));
-  const timelineNames = Array.from(new Set(state.works.flatMap(x => [x.timeline, x.series]).filter(Boolean)));
+  const worldNames = Array.from(new Set(state.works.flatMap(x => [x.world, x.series]).filter(Boolean)));
+  const kindNames = Array.from(new Set([...KINDS, ...state.works.map(x => x.kind).filter(Boolean)]));
 
   view().innerHTML = `
     <div class="breadcrumb"><button data-go="/">書架</button> ／ ${w ? '改訂' : '収蔵'}</div>
@@ -505,16 +545,22 @@ function renderEditor(id) {
       </div>
       <div class="row2">
         <div class="field">
-          <label for="f-timeline">時間軸（年表）</label>
-          <input id="f-timeline" list="timeline-list" value="${esc(w?.timeline || '')}" placeholder="番外編も含めて一つに束ねる名前">
-          <datalist id="timeline-list">${timelineNames.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
-          <span class="hint">連作をまたいで同じ名前を入れると、一つの年表にまとまります。</span>
+          <label for="f-world">叢書（まとまり）</label>
+          <input id="f-world" list="world-list" value="${esc(w?.world || '')}" placeholder="本編も後日談もまとめる名前">
+          <datalist id="world-list">${worldNames.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+          <span class="hint">本編と、そのあとの後日談や日常の話に同じ名前を入れると、一つの棚にまとまります。</span>
         </div>
         <div class="field">
-          <label for="f-chrono">時系列の位置</label>
-          <input id="f-chrono" type="number" step="0.1" inputmode="decimal" value="${w?.chrono ?? ''}" placeholder="2.5">
-          <span class="hint">第二話と第三話のあいだの番外編なら 2.5、ずっと昔の話なら 0 や -1。</span>
+          <label for="f-kind">区　分</label>
+          <input id="f-kind" list="kind-list" value="${esc(w?.kind || '')}" placeholder="本編／後日談／番外編…">
+          <datalist id="kind-list">${kindNames.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+          <span class="hint">叢書の中の見出しになります。空欄なら「本編」として扱います。</span>
         </div>
+      </div>
+      <div class="field">
+        <label for="f-pos">叢書の中での並び順（任意）</label>
+        <input id="f-pos" type="number" step="0.1" inputmode="decimal" value="${w?.pos ?? ''}" placeholder="1">
+        <span class="hint">同じ区分の中での順番。空欄なら連作内の順番、それも無ければ収めた順に並びます。</span>
       </div>
       <div class="field">
         <label for="f-summary">あ ら す じ</label>
@@ -547,14 +593,15 @@ function renderEditor(id) {
   $('#f').addEventListener('submit', e => {
     e.preventDefault();
     const orderRaw = $('#f-order').value.trim();
-    const chronoRaw = $('#f-chrono').value.trim();
+    const posRaw = $('#f-pos').value.trim();
     const data = {
       id: w?.id,
       title: $('#f-title').value.trim() || '無題',
       series: $('#f-series').value.trim(),
       order: orderRaw === '' ? null : Number(orderRaw),
-      timeline: $('#f-timeline').value.trim(),
-      chrono: chronoRaw === '' ? null : Number(chronoRaw),
+      world: $('#f-world').value.trim(),
+      kind: $('#f-kind').value.trim(),
+      pos: posRaw === '' ? null : Number(posRaw),
       summary: $('#f-summary').value.trim(),
       author: $('#f-author').value.trim(),
       tags: $('#f-tags').value.split(/[,、\s]+/).filter(Boolean),
@@ -636,7 +683,7 @@ function renderArchive() {
 }
 
 const CLAUDE_PROMPT = `これまで書いた小説を、次のJSON形式だけで出力してください（説明文なし・コードブロック内）。
-{"works":[{"title":"題名","series":"連作名(なければ空文字)","order":1,"timeline":"時間軸の名(任意。番外編も同じ名にする)","chrono":2.5,"summary":"あらすじ","tags":["タグ"],"body":"本文。段落は空行、見出しは # 、ルビは 漢字《かんじ》"}]}`;
+{"works":[{"title":"題名","series":"連作名(なければ空文字)","order":1,"world":"叢書名(任意。後日談も同じ名にする)","kind":"本編/後日談/番外編(任意)","pos":1,"summary":"あらすじ","tags":["タグ"],"body":"本文。段落は空行、見出しは # 、ルビは 漢字《かんじ》"}]}`;
 
 /* ---------- 取り込み ---------- */
 function importDialog(prefill) {
@@ -872,7 +919,12 @@ function updateStat() {
   $('#stat').textContent = n ? `蔵書 ${n} 冊 ・ ${fmtCount(c)}` : '蔵書 0 冊';
 }
 
-function render() { route(); updateStat(); }
+function render() {
+  route();
+  updateStat();
+  const h = location.hash.replace(/^#/, '');
+  $('#btn-home').hidden = (h === '' || h === '/');
+}
 
 async function handleImportHash() {
   const m = location.hash.match(/^#import=([A-Za-z0-9_\-]+)$/);
@@ -900,6 +952,12 @@ function init() {
   load();
   $('#btn-new').addEventListener('click', () => go('/new'));
   $('#btn-archive').addEventListener('click', () => go('/archive'));
+  $('#btn-home').addEventListener('click', () => {
+    $('#search').value = '';
+    query = '';
+    go('/');
+    render();
+  });
   $('#search').addEventListener('input', e => {
     query = e.target.value.trim();
     if (location.hash && location.hash !== '#/' && location.hash !== '') { location.hash = '/'; }

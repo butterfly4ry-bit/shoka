@@ -1,6 +1,6 @@
 /* 書架 — service worker
    app shell を先に焼き付けておき、以後は棚の中身と同じく手元だけで動く。 */
-const VERSION = 'shoka-v2';
+const VERSION = 'shoka-v3';
 const SHELL = [
   './',
   './index.html',

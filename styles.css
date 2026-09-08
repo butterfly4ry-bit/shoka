@@ -396,32 +396,23 @@ button{ font:inherit; color:inherit; }
   border-radius:2px;
 }
 
-/* 年表札 */
-.card.chronicle .chrono-mini{
+/* 叢書札 */
+.section-head.sub{ margin-top:30px; }
+.section-head.sub h2{ font-size:14px; letter-spacing:.24em; color:var(--oxblood); }
+
+.card.omnibus .chrono-mini{
   display:flex; flex-direction:column; gap:3px; margin-top:2px;
   font-family:var(--sans); font-size:11px; color:var(--ink-soft);
 }
-.card.chronicle .chrono-mini span{ display:flex; gap:8px; align-items:baseline; }
-.card.chronicle .chrono-mini .pos{
-  color:var(--oxblood); min-width:2.6em; text-align:right; font-size:10px; letter-spacing:.06em;
+.card.omnibus .chrono-mini span{ display:flex; gap:9px; align-items:baseline; }
+.card.omnibus .chrono-mini .pos{
+  color:var(--oxblood); min-width:4.2em; font-size:10px; letter-spacing:.12em;
 }
-.card.chronicle .chrono-mini .nm{
+.card.omnibus .chrono-mini .nm{
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   font-family:var(--serif); font-size:13px; color:var(--ink);
 }
 
-/* 年表（時系列の目次） */
-.toc.chrono{ position:relative; padding-left:20px; }
-.toc.chrono::before{
-  content:""; position:absolute; left:5px; top:10px; bottom:10px;
-  width:1px; background:var(--rule);
-}
-.toc.chrono li{ position:relative; }
-.toc.chrono li::before{
-  content:""; position:absolute; left:-18px; top:22px;
-  width:7px; height:7px; border-radius:50%;
-  background:var(--card); border:1px solid var(--oxblood);
-}
 .toc .stack-t{ display:flex; flex-direction:column; gap:3px; min-width:0; }
 .toc .sub-inline{
   font-family:var(--sans); font-size:10.5px; letter-spacing:.1em; color:var(--ink-faint);
