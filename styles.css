@@ -52,7 +52,11 @@
 
 *,*::before,*::after{ box-sizing:border-box; }
 
-html{ -webkit-text-size-adjust:100%; }
+html{
+  -webkit-text-size-adjust:100%;
+  /* 二本指・ダブルタップでの拡大は切る（文字の大小は閲覧画面の「小／大」で） */
+  touch-action:manipulation;
+}
 
 body{
   margin:0;
@@ -106,7 +110,7 @@ button{ font:inherit; color:inherit; }
 .search-icon{ font-size:12px; opacity:.55; filter:grayscale(1); }
 .search input{
   border:0; background:transparent; outline:none;
-  font-family:var(--serif); font-size:14px; color:#33261a; width:min(46vw,230px);
+  font-family:var(--serif); font-size:16px; color:#33261a; width:min(46vw,230px);
 }
 .search input::placeholder{ color:#9b8666; }
 
@@ -265,7 +269,7 @@ button{ font:inherit; color:inherit; }
 .field{ display:grid; gap:6px; }
 .field label{ font-family:var(--sans); font-size:11px; letter-spacing:.16em; color:var(--ink-faint); }
 .field input, .field textarea, .field select{
-  font-family:var(--serif); font-size:15px; color:var(--ink);
+  font-family:var(--serif); font-size:16px; color:var(--ink);
   background:rgba(255,250,235,.6);
   border:1px solid var(--rule); border-radius:2px; padding:9px 11px;
   box-shadow:inset 0 1px 3px rgba(90,68,40,.12);
@@ -375,4 +379,50 @@ button{ font:inherit; color:inherit; }
   .view{ padding:18px 14px 70px; }
   .shelf{ grid-template-columns:1fr; }
   .toc .sub{ display:none; }
+}
+
+/* ---------- 棚の並べ方 ---------- */
+.shelf-modes{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  margin:4px 0 2px;
+}
+.shelf-modes .modes-label{
+  font-family:var(--sans); font-size:10.5px; letter-spacing:.2em; color:var(--ink-faint);
+  margin-right:2px;
+}
+.note{
+  background:rgba(169,132,60,.09); border:1px dashed var(--rule);
+  padding:14px 16px; font-size:13.5px; line-height:1.9; color:var(--ink-soft);
+  border-radius:2px;
+}
+
+/* 年表札 */
+.card.chronicle .chrono-mini{
+  display:flex; flex-direction:column; gap:3px; margin-top:2px;
+  font-family:var(--sans); font-size:11px; color:var(--ink-soft);
+}
+.card.chronicle .chrono-mini span{ display:flex; gap:8px; align-items:baseline; }
+.card.chronicle .chrono-mini .pos{
+  color:var(--oxblood); min-width:2.6em; text-align:right; font-size:10px; letter-spacing:.06em;
+}
+.card.chronicle .chrono-mini .nm{
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:var(--serif); font-size:13px; color:var(--ink);
+}
+
+/* 年表（時系列の目次） */
+.toc.chrono{ position:relative; padding-left:20px; }
+.toc.chrono::before{
+  content:""; position:absolute; left:5px; top:10px; bottom:10px;
+  width:1px; background:var(--rule);
+}
+.toc.chrono li{ position:relative; }
+.toc.chrono li::before{
+  content:""; position:absolute; left:-18px; top:22px;
+  width:7px; height:7px; border-radius:50%;
+  background:var(--card); border:1px solid var(--oxblood);
+}
+.toc .stack-t{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.toc .sub-inline{
+  font-family:var(--sans); font-size:10.5px; letter-spacing:.1em; color:var(--ink-faint);
 }

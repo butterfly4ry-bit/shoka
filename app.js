@@ -9,7 +9,7 @@ const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 /* ---------- 状態 ---------- */
-let state = { works: [], settings: { tategaki: false, size: 17 } };
+let state = { works: [], settings: { tategaki: false, size: 17, shelfMode: 'series' } };
 let query = '';
 let deferredInstall = null;
 
@@ -39,6 +39,8 @@ function normalize(w) {
     title: (w.title || '無題').trim(),
     series: (w.series || '').trim(),
     order: (w.order === 0 || w.order) ? Number(w.order) : null,
+    timeline: (w.timeline || '').trim(),
+    chrono: (w.chrono === 0 || w.chrono) ? Number(w.chrono) : null,
     summary: (w.summary || '').trim(),
     author: (w.author || '').trim(),
     tags: Array.isArray(w.tags) ? w.tags.filter(Boolean) : String(w.tags || '').split(/[,、\s]+/).filter(Boolean),
@@ -135,6 +137,14 @@ function sortInSeries(a, b) {
   if (ao == null && bo != null) return 1;
   return a.createdAt - b.createdAt;
 }
+function chronoSort(a, b) {
+  const av = a.chrono != null ? a.chrono : a.order;
+  const bv = b.chrono != null ? b.chrono : b.order;
+  if (av != null && bv != null && av !== bv) return av - bv;
+  if (av != null && bv == null) return -1;
+  if (av == null && bv != null) return 1;
+  return a.createdAt - b.createdAt;
+}
 function groups() {
   const map = new Map();
   const singles = [];
@@ -152,9 +162,26 @@ function groups() {
   return { series, singles };
 }
 
+function timelineGroups() {
+  const map = new Map();
+  const rest = [];
+  for (const w of state.works) {
+    if (w.timeline) {
+      if (!map.has(w.timeline)) map.set(w.timeline, []);
+      map.get(w.timeline).push(w);
+    } else rest.push(w);
+  }
+  for (const arr of map.values()) arr.sort(chronoSort);
+  const lines = Array.from(map.entries())
+    .map(([name, works]) => ({ name, works, updatedAt: Math.max(...works.map(w => w.updatedAt)) }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  rest.sort((a, b) => b.updatedAt - a.updatedAt);
+  return { lines, rest };
+}
+
 function matches(w, q) {
   if (!q) return true;
-  const hay = [w.title, w.series, w.summary, w.author, w.tags.join(' '), w.body].join('\n').toLowerCase();
+  const hay = [w.title, w.series, w.timeline, w.summary, w.author, w.tags.join(' '), w.body].join('\n').toLowerCase();
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t));
 }
 
@@ -167,6 +194,7 @@ function route() {
   const h = location.hash.replace(/^#/, '');
   if (h.startsWith('/w/'))      return renderReader(decodeURIComponent(h.slice(3)));
   if (h.startsWith('/series/')) return renderSeries(decodeURIComponent(h.slice(8)));
+  if (h.startsWith('/t/'))      return renderTimeline(decodeURIComponent(h.slice(3)));
   if (h.startsWith('/edit/'))   return renderEditor(decodeURIComponent(h.slice(6)));
   if (h === '/new')             return renderEditor(null);
   if (h === '/archive')         return renderArchive();
@@ -198,19 +226,58 @@ function renderShelf() {
     return;
   }
 
-  const { series, singles } = groups();
-  let html = '';
+  const mode = state.settings.shelfMode === 'timeline' ? 'timeline' : 'series';
+  let html = `
+    <div class="shelf-modes">
+      <span class="modes-label">棚の並べ方</span>
+      <button class="chip" data-mode="series" aria-pressed="${mode === 'series'}">連作・単巻</button>
+      <button class="chip" data-mode="timeline" aria-pressed="${mode === 'timeline'}">時間軸（年表）</button>
+    </div>`;
 
-  if (series.length) {
-    html += `<div class="section-head"><h2>連 作 の 棚</h2><span class="count">${series.length} series</span></div>`;
-    html += '<div class="shelf">' + series.map(seriesCard).join('') + '</div><div class="shelf-board"></div>';
-  }
-  if (singles.length) {
-    html += `<div class="section-head"><h2>単 巻 の 棚</h2><span class="count">${singles.length} volumes</span></div>`;
-    html += '<div class="shelf">' + singles.map(w => workCard(w)).join('') + '</div><div class="shelf-board"></div>';
+  if (mode === 'timeline') {
+    const { lines, rest } = timelineGroups();
+    if (lines.length) {
+      html += sectionHead('年 表 の 棚', lines.length + ' chronicles');
+      html += shelfOf(lines.map(timelineCard));
+    } else {
+      html += `<div class="section-head"><h2>年 表 の 棚</h2><span class="count">まだ一つも</span></div>
+        <p class="note">蔵書を開いて「手を入れる」から、<strong>時間軸（年表）</strong>に同じ名前を入れると、
+        連作をまたいで一つの年表にまとまります。<br>
+        <strong>時系列の位置</strong>に数を入れると、その順に並びます。本編の第二話と第三話のあいだの番外編なら
+        <strong>2.5</strong>、ずっと昔の話なら <strong>0</strong> や <strong>-1</strong> のように。</p>`;
+    }
+    if (rest.length) {
+      html += sectionHead('年表に載せていない蔵書', rest.length + ' volumes');
+      html += shelfOf(rest.map(w => workCard(w)));
+    }
+  } else {
+    const { series, singles } = groups();
+    if (series.length) {
+      html += sectionHead('連 作 の 棚', series.length + ' series');
+      html += shelfOf(series.map(seriesCard));
+    }
+    if (singles.length) {
+      html += sectionHead('単 巻 の 棚', singles.length + ' volumes');
+      html += shelfOf(singles.map(w => workCard(w)));
+    }
   }
   v.innerHTML = html;
   bindCards();
+  bindModes();
+}
+
+function sectionHead(title, count) {
+  return `<div class="section-head"><h2>${title}</h2><span class="count">${count}</span></div>`;
+}
+function shelfOf(cards) {
+  return '<div class="shelf">' + cards.join('') + '</div><div class="shelf-board"></div>';
+}
+function bindModes() {
+  $$('[data-mode]').forEach(b => b.addEventListener('click', () => {
+    state.settings.shelfMode = b.dataset.mode;
+    save();
+    renderShelf();
+  }));
 }
 
 function seriesCard(s) {
@@ -224,6 +291,18 @@ function seriesCard(s) {
       <span class="spines" aria-hidden="true">${spines}</span>
       ${summary ? `<span class="card-summary">${esc(summary)}</span>` : ''}
       <span class="card-meta"><span>最終更新 ${fmtDate(s.updatedAt)}</span><span>${fmtCount(s.works.reduce((n, w) => n + countChars(w.body), 0))}</span></span>
+    </button>`;
+}
+
+function timelineCard(t) {
+  const preview = t.works.slice(0, 4).map(w => `
+    <span><span class="pos">${w.chrono != null ? esc(String(w.chrono)) : (w.order != null ? esc(String(w.order)) : '—')}</span><span class="nm">${esc(w.title)}</span></span>`).join('');
+  return `
+    <button class="card chronicle" data-go="/t/${encodeURIComponent(t.name)}">
+      <span class="card-kicker">chronicle &middot; 全${t.works.length}編</span>
+      <span class="card-title">${esc(t.name)}</span>
+      <span class="chrono-mini">${preview}${t.works.length > 4 ? '<span><span class="pos"></span><span class="nm">ほか' + (t.works.length - 4) + '編</span></span>' : ''}</span>
+      <span class="card-meta"><span>最終更新 ${fmtDate(t.updatedAt)}</span><span>${fmtCount(t.works.reduce((n, w) => n + countChars(w.body), 0))}</span></span>
     </button>`;
 }
 
@@ -289,11 +368,49 @@ function renderSeries(name) {
   $('#share-series').addEventListener('click', () => shareDialog(works, name));
 }
 
+/* ---------- 年表 ---------- */
+function renderTimeline(name) {
+  const works = state.works.filter(w => w.timeline === name).sort(chronoSort);
+  if (!works.length) return go('/');
+  const total = works.reduce((n, w) => n + countChars(w.body), 0);
+  const lede = works.find(w => w.summary)?.summary || '';
+
+  view().innerHTML = `
+    <div class="breadcrumb"><button data-go="/">書架</button> ／ 年表</div>
+    <div class="plate">
+      <div class="stamp">年表<br>CHRONICLE</div>
+      <h1>${esc(name)}</h1>
+      ${lede ? `<p class="lede">${esc(lede)}</p>` : ''}
+      <p class="meta">全 ${works.length} 編 &middot; ${fmtCount(total)} &middot; 最終更新 ${fmtDate(Math.max(...works.map(w => w.updatedAt)))}</p>
+    </div>
+    <div class="section-head"><h2>時 系 列</h2><span class="count">chronology</span></div>
+    <ul class="toc chrono">
+      ${works.map(w => `
+        <li><button data-go="/w/${encodeURIComponent(w.id)}">
+          <span class="num">${w.chrono != null ? esc(String(w.chrono)) : '—'}</span>
+          <span class="stack-t">
+            <span class="ttl">${esc(w.title)}</span>
+            <span class="sub-inline">${w.series ? esc(w.series) + (w.order != null ? ' 第' + w.order + '話' : '') : '単巻'} &middot; ${fmtCount(countChars(w.body))}</span>
+          </span>
+        </button></li>`).join('')}
+    </ul>
+    <div class="form-actions" style="margin-top:22px">
+      <button class="btn" onclick="location.hash='/new'">この年表に一編を加える</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="share-timeline">この年表を共有URLにする</button>
+    </div>`;
+  bindCards();
+  $('#share-timeline').addEventListener('click', () => shareDialog(works, name));
+}
+
 /* ---------- 閲覧 ---------- */
 function renderReader(id) {
   const w = state.works.find(x => x.id === id);
   if (!w) return go('/');
-  const sib = w.series ? state.works.filter(x => x.series === w.series).sort(sortInSeries) : [w];
+  const useTL = state.settings.shelfMode === 'timeline' && w.timeline;
+  const sib = useTL
+    ? state.works.filter(x => x.timeline === w.timeline).sort(chronoSort)
+    : (w.series ? state.works.filter(x => x.series === w.series).sort(sortInSeries) : [w]);
   const idx = sib.findIndex(x => x.id === w.id);
   const prev = sib[idx - 1], next = sib[idx + 1];
   const t = state.settings.tategaki;
@@ -301,13 +418,16 @@ function renderReader(id) {
   view().innerHTML = `
     <div class="breadcrumb">
       <button data-go="/">書架</button> ／
-      ${w.series ? `<button data-go="/series/${encodeURIComponent(w.series)}">${esc(w.series)}</button> ／ ` : ''}
+      ${useTL
+        ? `<button data-go="/t/${encodeURIComponent(w.timeline)}">${esc(w.timeline)}</button> ／ `
+        : (w.series ? `<button data-go="/series/${encodeURIComponent(w.series)}">${esc(w.series)}</button> ／ ` : '')}
       閲覧
     </div>
     <div class="reader-bar">
       <button class="chip" id="tate" aria-pressed="${t}">縦書き</button>
       <button class="chip" id="smaller">小</button>
       <button class="chip" id="bigger">大</button>
+      ${w.timeline ? `<button class="chip" data-go="/t/${encodeURIComponent(w.timeline)}">年表：${esc(w.timeline)}${w.chrono != null ? '（' + esc(String(w.chrono)) + '）' : ''}</button>` : ''}
       <span class="spacer"></span>
       <button class="chip" data-go="/edit/${encodeURIComponent(w.id)}">手を入れる</button>
       <button class="chip" id="share-one">共有URL</button>
@@ -358,6 +478,7 @@ function renderEditor(id) {
   const w = id ? state.works.find(x => x.id === id) : null;
   if (id && !w) return go('/');
   const seriesNames = Array.from(new Set(state.works.map(x => x.series).filter(Boolean)));
+  const timelineNames = Array.from(new Set(state.works.flatMap(x => [x.timeline, x.series]).filter(Boolean)));
 
   view().innerHTML = `
     <div class="breadcrumb"><button data-go="/">書架</button> ／ ${w ? '改訂' : '収蔵'}</div>
@@ -380,6 +501,19 @@ function renderEditor(id) {
         <div class="field">
           <label for="f-order">連作内の順番（第◯話）</label>
           <input id="f-order" type="number" inputmode="numeric" value="${w?.order ?? ''}" placeholder="1">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="f-timeline">時間軸（年表）</label>
+          <input id="f-timeline" list="timeline-list" value="${esc(w?.timeline || '')}" placeholder="番外編も含めて一つに束ねる名前">
+          <datalist id="timeline-list">${timelineNames.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+          <span class="hint">連作をまたいで同じ名前を入れると、一つの年表にまとまります。</span>
+        </div>
+        <div class="field">
+          <label for="f-chrono">時系列の位置</label>
+          <input id="f-chrono" type="number" step="0.1" inputmode="decimal" value="${w?.chrono ?? ''}" placeholder="2.5">
+          <span class="hint">第二話と第三話のあいだの番外編なら 2.5、ずっと昔の話なら 0 や -1。</span>
         </div>
       </div>
       <div class="field">
@@ -413,11 +547,14 @@ function renderEditor(id) {
   $('#f').addEventListener('submit', e => {
     e.preventDefault();
     const orderRaw = $('#f-order').value.trim();
+    const chronoRaw = $('#f-chrono').value.trim();
     const data = {
       id: w?.id,
       title: $('#f-title').value.trim() || '無題',
       series: $('#f-series').value.trim(),
       order: orderRaw === '' ? null : Number(orderRaw),
+      timeline: $('#f-timeline').value.trim(),
+      chrono: chronoRaw === '' ? null : Number(chronoRaw),
       summary: $('#f-summary').value.trim(),
       author: $('#f-author').value.trim(),
       tags: $('#f-tags').value.split(/[,、\s]+/).filter(Boolean),
@@ -499,7 +636,7 @@ function renderArchive() {
 }
 
 const CLAUDE_PROMPT = `これまで書いた小説を、次のJSON形式だけで出力してください（説明文なし・コードブロック内）。
-{"works":[{"title":"題名","series":"連作名(なければ空文字)","order":1,"summary":"あらすじ","tags":["タグ"],"body":"本文。段落は空行、見出しは # 、ルビは 漢字《かんじ》"}]}`;
+{"works":[{"title":"題名","series":"連作名(なければ空文字)","order":1,"timeline":"時間軸の名(任意。番外編も同じ名にする)","chrono":2.5,"summary":"あらすじ","tags":["タグ"],"body":"本文。段落は空行、見出しは # 、ルビは 漢字《かんじ》"}]}`;
 
 /* ---------- 取り込み ---------- */
 function importDialog(prefill) {
@@ -772,6 +909,13 @@ function init() {
     if (location.hash.startsWith('#import=')) { handleImportHash(); return; }
     render();
   });
+
+  // 二本指・ダブルタップでの拡大は切る（文字の大小は閲覧画面の「小／大」で変える）
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
+    document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', e => {
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
 
   window.addEventListener('beforeinstallprompt', e => {
     e.preventDefault(); deferredInstall = e; $('#btn-install').hidden = false;
