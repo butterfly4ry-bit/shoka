@@ -87,12 +87,28 @@ button{ font:inherit; color:inherit; }
   position:sticky; top:0; z-index:40;
   background:linear-gradient(180deg, var(--leather), var(--leather-2));
   box-shadow:0 6px 18px var(--shadow);
+  padding-top:env(safe-area-inset-top);   /* 時計・電池の帯を避ける */
 }
 .topbar-inner{
   max-width:1080px; margin:0 auto;
-  padding:10px 18px 12px;
-  display:flex; gap:16px; align-items:center; flex-wrap:wrap;
+  padding:8px 18px 10px;
+  padding-left:max(18px, env(safe-area-inset-left));
+  padding-right:max(18px, env(safe-area-inset-right));
+  display:flex; gap:12px; align-items:center; flex-wrap:wrap;
 }
+
+/* 「← 書架へ」は題字の隣に。狭い画面では同じ行の右端に寄せる */
+#btn-home{ margin-left:auto; white-space:nowrap; }
+@media (min-width:561px){
+  #btn-home{ margin-left:0; }
+}
+
+/* 読んでいるあいだは、検索欄と収蔵・書庫を仕舞って帯を細くする */
+body[data-view="reader"] .topbar-tools{ display:none; }
+body[data-view="reader"] .topbar-inner{ padding-top:6px; padding-bottom:8px; }
+body[data-view="reader"] .brand-sub{ display:none; }
+body[data-view="reader"] .brand-name{ font-size:18px; letter-spacing:.22em; }
+body[data-view="reader"] .brand-mark{ font-size:21px; }
 .brand{ display:flex; align-items:center; gap:12px; text-decoration:none; color:#efe2c2; }
 .brand-mark{ color:var(--gold-2); font-size:26px; line-height:1; text-shadow:0 1px 0 rgba(0,0,0,.6); }
 .brand-text{ display:flex; flex-direction:column; }
@@ -340,7 +356,7 @@ button{ font:inherit; color:inherit; }
 /* ---------- フッタ・トースト ---------- */
 .footer{
   border-top:1px solid var(--rule-soft);
-  padding:14px 18px 28px; text-align:center;
+  padding:14px 18px calc(28px + env(safe-area-inset-bottom)); text-align:center;
   font-family:var(--sans); font-size:11px; letter-spacing:.1em; color:var(--ink-faint);
   display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap;
 }

@@ -924,6 +924,7 @@ function render() {
   updateStat();
   const h = location.hash.replace(/^#/, '');
   $('#btn-home').hidden = (h === '' || h === '/');
+  document.body.dataset.view = h.startsWith('/w/') ? 'reader' : 'shelf';
 }
 
 async function handleImportHash() {
