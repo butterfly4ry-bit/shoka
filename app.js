@@ -502,10 +502,14 @@ function renderSeries(name) {
     </ul>
     <div class="form-actions" style="margin-top:22px">
       <button class="btn" onclick="location.hash='/new'">この連作に続きを納める</button>
+      <button class="btn ghost" id="rename-series">連作名を改める</button>
+      <button class="btn ghost" id="to-world">叢書に入れる</button>
       <span class="spacer"></span>
       <button class="btn ghost" id="share-series">この連作を共有URLにする</button>
     </div>`;
   bindCards();
+  $('#rename-series').addEventListener('click', () => renameGroup('series', name));
+  $('#to-world').addEventListener('click', () => assignWorld(name));
   $('#share-series').addEventListener('click', () => shareDialog(works, name));
 }
 
@@ -539,10 +543,12 @@ function renderWorld(name) {
       </ul>`).join('')}
     <div class="form-actions" style="margin-top:24px">
       <button class="btn" onclick="location.hash='/new'">この叢書に一編を加える</button>
+      <button class="btn ghost" id="rename-world">叢書名を改める</button>
       <span class="spacer"></span>
       <button class="btn ghost" id="share-world">この叢書を共有URLにする</button>
     </div>`;
   bindCards();
+  $('#rename-world').addEventListener('click', () => renameGroup('world', name));
   $('#share-world').addEventListener('click', () => shareDialog(works, name));
 }
 
@@ -1002,6 +1008,80 @@ function closeDialog() {
   document.removeEventListener('keydown', escClose);
 }
 function escClose(e) { if (e.key === 'Escape') closeDialog(); }
+
+// 一行だけ書いてもらう帳面
+function promptDialog({ title, desc, label, value, options, hint, okText, onOk }) {
+  const el = dialog(`
+    <h3>${esc(title)}</h3>
+    <p>${desc}</p>
+    <div class="field">
+      <label for="pd">${esc(label)}</label>
+      <input id="pd" list="pd-list" value="${esc(value || '')}" autocomplete="off" spellcheck="false">
+      <datalist id="pd-list">${(options || []).map(o => `<option value="${esc(o)}">`).join('')}</datalist>
+      ${hint ? `<span class="hint">${hint}</span>` : ''}
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" id="pd-ok">${esc(okText || '改める')}</button>
+      <button class="btn ghost" data-close>やめる</button>
+    </div>`);
+  const input = $('#pd', el);
+  const fire = () => onOk(input.value.trim());
+  $('#pd-ok', el).addEventListener('click', fire);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fire(); } });
+  setTimeout(() => { input.focus(); input.select(); }, 40);
+}
+
+// 連作名・叢書名を、その名を持つ蔵書すべてでいちどに書き替える
+function renameGroup(field, oldName) {
+  const isSeries = field === 'series';
+  const label = isSeries ? '連作名' : '叢書名';
+  const members = state.works.filter(w => w[field] === oldName);
+  const others = Array.from(new Set(state.works.map(w => w[field]).filter(v => v && v !== oldName)));
+
+  promptDialog({
+    title: label + 'を改める',
+    desc: `「${esc(oldName)}」を名乗る <strong>${members.length} 編</strong>すべての${label}を、いちどに書き替えます。本文と題名はそのままです。`,
+    label: '新しい' + label,
+    value: oldName,
+    options: others,
+    hint: `すでにある名前を入れると、そちらと一つにまとまります。空欄にすると${isSeries ? 'すべて単巻に戻ります' : '叢書から外れます'}。`,
+    onOk: next => {
+      if (next === oldName) return closeDialog();
+      for (const w of members) w[field] = next;
+      save();
+      closeDialog();
+      toast(members.length + ' 編の' + label + 'を改めました');
+      if (!next) go('/');
+      else go((isSeries ? '/series/' : '/g/') + encodeURIComponent(next));
+      render();
+    }
+  });
+}
+
+// 連作まるごとを、ひとつの叢書に入れる
+function assignWorld(seriesName) {
+  const members = state.works.filter(w => w.series === seriesName);
+  const now = members.find(w => w.world)?.world || '';
+  const options = Array.from(new Set(state.works.flatMap(w => [w.world, w.series]).filter(Boolean)));
+
+  promptDialog({
+    title: 'この連作を叢書に入れる',
+    desc: `「${esc(seriesName)}」の <strong>${members.length} 話</strong>すべてを、ひとつの叢書に入れます。後日談や番外編に同じ名前を付ければ、同じ棚に並びます。`,
+    label: '叢書（まとまり）の名',
+    value: now || seriesName,
+    options,
+    hint: '空欄にすると、叢書から外れます。',
+    okText: '入れる',
+    onOk: next => {
+      for (const w of members) w.world = next;
+      save();
+      closeDialog();
+      toast(next ? members.length + ' 話を「' + next + '」に入れました' : '叢書から外しました');
+      if (next) go('/g/' + encodeURIComponent(next));
+      render();
+    }
+  });
+}
 
 function confirmDialog(title, msg, onOk) {
   const el = dialog(`
