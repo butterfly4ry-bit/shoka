@@ -471,8 +471,8 @@ body[data-view="reader"] .brand-mark{ font-size:21px; }
 }
 .spine-book .spine{
   position:relative; width:100%; height:calc(var(--hf) * var(--row));
-  display:flex; flex-direction:column; align-items:center;
-  padding:12px 2px 8px;
+  display:flex; flex-direction:column; align-items:stretch;
+  overflow:hidden;
   color:var(--fg);
   background-color:var(--bg);
   background-image:linear-gradient(90deg,
@@ -483,31 +483,53 @@ body[data-view="reader"] .brand-mark{ font-size:21px; }
   box-shadow:1px 2px 6px rgba(40,27,15,.4), inset 0 -8px 10px -8px rgba(0,0,0,.5);
   transition:transform .14s ease, box-shadow .14s ease;
 }
-/* 金の帯 */
-.spine-book .spine::before,
-.spine-book .spine::after{
-  content:""; position:absolute; left:3px; right:3px; height:1px;
-  background:var(--band); opacity:.85;
-}
-.spine-book .spine::before{ top:7px; box-shadow:0 3px 0 -1px var(--band); }
-.spine-book .spine::after{ bottom:26px; }
 
+/* 天地の飾りと金の帯 */
+.spine-head, .spine-foot{
+  flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:5px;
+}
+.spine-head{ padding:8px 3px 0; }
+.spine-foot{ padding:0 3px 7px; }
+
+.band{
+  width:calc(100% - 7px); height:5px; box-sizing:border-box;
+  border-top:2px solid var(--band); border-bottom:1px solid var(--band);
+  opacity:.92;
+}
+.orn{
+  width:calc(100% - 8px); max-width:38px; height:auto;
+  color:var(--band); opacity:.9;
+}
+.orn *{ vector-effect:non-scaling-stroke; }
+.orn.flip{ transform:scaleY(-1); }
+
+/* 題名 */
+.spine-mid{
+  flex:1 1 auto; min-height:0; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; padding:8px 0;
+}
 .spine-ttl{
   writing-mode:vertical-rl; text-orientation:mixed;
   letter-spacing:.1em; line-height:1.25; font-family:var(--serif);
-  max-height:calc(var(--hf) * var(--row) - 52px); overflow:hidden;
-  margin-top:4px; text-shadow:0 1px 1px rgba(0,0,0,.28);
-
+  max-height:100%; overflow:hidden;
+  text-shadow:0 1px 1px rgba(0,0,0,.28);
 }
 /* 長い題名は下端をぼかして切る */
 .spine-ttl.long{
   -webkit-mask-image:linear-gradient(to bottom, #000 84%, transparent 100%);
   mask-image:linear-gradient(to bottom, #000 84%, transparent 100%);
 }
+/* 話数。Georgia の古い数字（オールドスタイル数字）で扉の趣に寄せる */
 .spine-num{
-  margin-top:auto; font-family:var(--sans); font-size:10px; letter-spacing:.04em;
-  opacity:.82;
+  font-family:Georgia, "Iowan Old Style", "Palatino", "Times New Roman", serif;
+  font-variant-numeric:oldstyle-nums;
+  font-feature-settings:"onum" 1;
+  font-size:12.5px; letter-spacing:.06em; line-height:1;
+  opacity:.88; margin-top:1px;
 }
+.spine-num::before, .spine-num::after{ content:"·"; opacity:.6; }
+.spine-num::before{ margin-right:3px; }
+.spine-num::after{ margin-left:3px; }
 
 .spine-book:hover .spine{ transform:translateY(-6px); box-shadow:2px 5px 12px rgba(40,27,15,.5); }
 .spine-book:active .spine{ transform:translateY(-2px); }
@@ -517,6 +539,8 @@ body[data-view="reader"] .brand-mark{ font-size:21px; }
 
 @media (max-width:560px){
   .bookcase{ --row:206px; --board:13px; padding:0 10px var(--board); gap:var(--board) 4px; }
-  .spine-ttl{ max-height:calc(var(--hf) * var(--row) - 46px); }
+  .spine-head{ padding-top:7px; }
+  .spine-foot{ padding-bottom:6px; }
+  .spine-num{ font-size:11.5px; }
   .modes-gap{ width:100%; margin:6px 0 0; }
 }

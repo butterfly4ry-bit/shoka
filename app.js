@@ -109,6 +109,33 @@ function spineTone(seed) {
   };
 }
 
+// 背表紙の天地に置く唐草飾り。題名から三種のうち一つが決まる。
+const ORNAMENTS = [
+  // 菱形に葉を添えた飾り
+  `<path d="M22 3.6 L26.6 9 L22 14.4 L17.4 9 Z"/>
+   <circle cx="22" cy="9" r="1.5" fill="currentColor" stroke="none"/>
+   <path d="M15.4 9 C12 9 10 6.6 7 9 C10 11.4 12 9 15.4 9"/>
+   <path d="M28.6 9 C32 9 34 6.6 37 9 C34 11.4 32 9 28.6 9"/>
+   <circle cx="4.6" cy="9" r="1.1" fill="currentColor" stroke="none"/>
+   <circle cx="39.4" cy="9" r="1.1" fill="currentColor" stroke="none"/>`,
+  // 木の葉（フルーロン）
+  `<path d="M22 15.2 C22 11.4 18.2 10.4 18.2 7.2 C18.2 4.6 20.2 3.2 22 5.4 C23.8 3.2 25.8 4.6 25.8 7.2 C25.8 10.4 22 11.4 22 15.2"/>
+   <path d="M15 9 H8.4"/><path d="M29 9 H35.6"/>
+   <circle cx="6" cy="9" r="1.2" fill="currentColor" stroke="none"/>
+   <circle cx="38" cy="9" r="1.2" fill="currentColor" stroke="none"/>`,
+  // 波唐草
+  `<path d="M6 9 C11 3.4 15 14.6 20 9"/>
+   <path d="M24 9 C29 3.4 33 14.6 38 9"/>
+   <circle cx="22" cy="9" r="1.6" fill="currentColor" stroke="none"/>
+   <circle cx="22" cy="9" r="3.2"/>`
+];
+
+function ornament(seed, flip) {
+  const d = ORNAMENTS[hue(seed + '飾') % ORNAMENTS.length];
+  return `<svg class="orn${flip ? ' flip' : ''}" viewBox="0 0 44 18" preserveAspectRatio="xMidYMid meet" aria-hidden="true"
+    fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+}
+
 // 背表紙一冊分。話数が多いほど厚く、高さは題名から少しずつ変える。
 function spineBook(item) {
   const t = spineTone(item.name);
@@ -121,8 +148,18 @@ function spineBook(item) {
       style="--w:${thick}px;--hf:${high};--bg:${t.bg};--fg:${t.fg};--band:${t.band}"
       aria-label="${esc(item.name)}${item.count > 1 ? '（全' + item.count + '話）' : ''}">
       <span class="spine">
-        <span class="spine-ttl${n > 12 ? ' long' : ''}" style="font-size:${size}px">${esc(item.name)}</span>
-        <span class="spine-num">${item.count > 1 ? item.count : '&middot;'}</span>
+        <span class="spine-head">
+          ${ornament(item.name, false)}
+          <span class="band"></span>
+        </span>
+        <span class="spine-mid">
+          <span class="spine-ttl${n > 12 ? ' long' : ''}" style="font-size:${size}px">${esc(item.name)}</span>
+        </span>
+        <span class="spine-foot">
+          <span class="band"></span>
+          ${ornament(item.name, true)}
+          ${item.count > 1 ? `<span class="spine-num">${item.count}</span>` : ''}
+        </span>
       </span>
     </button>`;
 }
