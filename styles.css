@@ -433,3 +433,90 @@ body[data-view="reader"] .brand-mark{ font-size:21px; }
 .toc .sub-inline{
   font-family:var(--sans); font-size:10.5px; letter-spacing:.1em; color:var(--ink-faint);
 }
+
+/* ==========================================================================
+   本 棚（背表紙で並べる）
+   ========================================================================== */
+.bookcase{
+  --row:236px;          /* 一段の高さ */
+  --board:15px;         /* 棚板の厚み */
+  display:flex; flex-wrap:wrap; align-items:flex-end;
+  gap:var(--board) 5px;
+  padding:0 14px var(--board);
+  margin-bottom:26px;
+  border-radius:2px;
+  background-color:rgba(70,49,30,.10);
+  background-image:
+    repeating-linear-gradient(to bottom,
+      transparent 0 var(--row),
+      rgba(255,222,172,.20) var(--row) calc(var(--row) + 2px),
+      transparent calc(var(--row) + 2px) calc(var(--row) + var(--board))),
+    repeating-linear-gradient(to bottom,
+      transparent 0 var(--row),
+      var(--board-color) var(--row) calc(var(--row) + var(--board)));
+  box-shadow:inset 0 1px 10px rgba(52,36,21,.16);
+}
+@media (prefers-color-scheme: dark){
+  .bookcase{ background-color:rgba(0,0,0,.22); box-shadow:inset 0 1px 12px rgba(0,0,0,.5); }
+}
+:root{ --board-color:#5c4028; }
+@media (prefers-color-scheme: dark){ :root{ --board-color:#2b1f14; } }
+
+/* 一冊 */
+.spine-book{
+  width:var(--w); height:var(--row);
+  display:flex; align-items:flex-end; justify-content:center;
+  background:none; border:0; padding:0; cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.spine-book .spine{
+  position:relative; width:100%; height:calc(var(--hf) * var(--row));
+  display:flex; flex-direction:column; align-items:center;
+  padding:12px 2px 8px;
+  color:var(--fg);
+  background-color:var(--bg);
+  background-image:linear-gradient(90deg,
+    rgba(0,0,0,.34) 0, rgba(0,0,0,.10) 8%,
+    rgba(255,255,255,.10) 26%, rgba(255,255,255,.02) 62%,
+    rgba(0,0,0,.16) 88%, rgba(0,0,0,.36) 100%);
+  border-radius:2px 3px 3px 2px;
+  box-shadow:1px 2px 6px rgba(40,27,15,.4), inset 0 -8px 10px -8px rgba(0,0,0,.5);
+  transition:transform .14s ease, box-shadow .14s ease;
+}
+/* 金の帯 */
+.spine-book .spine::before,
+.spine-book .spine::after{
+  content:""; position:absolute; left:3px; right:3px; height:1px;
+  background:var(--band); opacity:.85;
+}
+.spine-book .spine::before{ top:7px; box-shadow:0 3px 0 -1px var(--band); }
+.spine-book .spine::after{ bottom:26px; }
+
+.spine-ttl{
+  writing-mode:vertical-rl; text-orientation:mixed;
+  letter-spacing:.1em; line-height:1.25; font-family:var(--serif);
+  max-height:calc(var(--hf) * var(--row) - 52px); overflow:hidden;
+  margin-top:4px; text-shadow:0 1px 1px rgba(0,0,0,.28);
+
+}
+/* 長い題名は下端をぼかして切る */
+.spine-ttl.long{
+  -webkit-mask-image:linear-gradient(to bottom, #000 84%, transparent 100%);
+  mask-image:linear-gradient(to bottom, #000 84%, transparent 100%);
+}
+.spine-num{
+  margin-top:auto; font-family:var(--sans); font-size:10px; letter-spacing:.04em;
+  opacity:.82;
+}
+
+.spine-book:hover .spine{ transform:translateY(-6px); box-shadow:2px 5px 12px rgba(40,27,15,.5); }
+.spine-book:active .spine{ transform:translateY(-2px); }
+.spine-book:focus-visible .spine{ outline:2px solid var(--gold); outline-offset:2px; }
+
+.modes-gap{ margin-left:10px; }
+
+@media (max-width:560px){
+  .bookcase{ --row:206px; --board:13px; padding:0 10px var(--board); gap:var(--board) 4px; }
+  .spine-ttl{ max-height:calc(var(--hf) * var(--row) - 46px); }
+  .modes-gap{ width:100%; margin:6px 0 0; }
+}

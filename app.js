@@ -9,7 +9,7 @@ const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 /* ---------- 状態 ---------- */
-let state = { works: [], settings: { tategaki: false, size: 17, shelfMode: 'series' } };
+let state = { works: [], settings: { tategaki: false, size: 17, shelfMode: 'series', shelfLook: 'spine' } };
 let query = '';
 let deferredInstall = null;
 
@@ -94,6 +94,43 @@ function hue(str) {
   for (const ch of String(str)) h = (h * 31 + ch.codePointAt(0)) % 360;
   return h;
 }
+// 背表紙の色。題名から決まるので、同じ本はいつも同じ色になる。
+// 落ち着いた（くすんだ）色に収まるよう、彩度と明度の幅を絞ってある。
+function spineTone(seed) {
+  const h = hue(seed) % 360;
+  const pale = hue(seed + '紙') % 6 === 0;          // 六冊に一冊ほど、生成りの背表紙
+  const hh = pale ? 32 + hue(seed + 'k') % 14 : h;  // 生成りは麻・象牙の色みに寄せる
+  const sat = pale ? 15 + hue(seed + 's') % 11 : 15 + hue(seed + 's') % 19;
+  const lit = pale ? 70 + hue(seed + 'l') % 9 : 23 + hue(seed + 'l') % 19;
+  return {
+    bg: `hsl(${hh} ${sat}% ${lit}%)`,
+    fg: lit >= 55 ? 'rgba(40,30,20,.92)' : 'rgba(238,226,200,.94)',
+    band: lit >= 55 ? 'rgba(120,90,45,.55)' : 'rgba(201,169,97,.62)'
+  };
+}
+
+// 背表紙一冊分。話数が多いほど厚く、高さは題名から少しずつ変える。
+function spineBook(item) {
+  const t = spineTone(item.name);
+  const thick = Math.round(Math.min(74, 27 + (item.count - 1) * 7 + Math.min(16, item.chars / 9000 * 16)));
+  const high = (78 + (hue(item.name + '丈') % 6) * 4) / 100;   // 段の高さに対する割合
+  const n = item.name.length;
+  const size = n > 20 ? 10 : n > 16 ? 11 : n > 10 ? 12 : 13.5;
+  return `
+    <button class="spine-book" data-go="${item.href}" title="${esc(item.name)}"
+      style="--w:${thick}px;--hf:${high};--bg:${t.bg};--fg:${t.fg};--band:${t.band}"
+      aria-label="${esc(item.name)}${item.count > 1 ? '（全' + item.count + '話）' : ''}">
+      <span class="spine">
+        <span class="spine-ttl${n > 12 ? ' long' : ''}" style="font-size:${size}px">${esc(item.name)}</span>
+        <span class="spine-num">${item.count > 1 ? item.count : '&middot;'}</span>
+      </span>
+    </button>`;
+}
+
+function bookcaseOf(spines) {
+  return '<div class="bookcase">' + spines.join('') + '</div>';
+}
+
 function spineColor(str, i) {
   const h = (hue(str) + i * 37) % 360;
   const palette = [
@@ -162,10 +199,12 @@ function posSort(a, b) {
   if (av == null && bv != null) return 1;
   return a.createdAt - b.createdAt;
 }
-function groups() {
+function groups() { return groupList(state.works); }
+
+function groupList(list) {
   const map = new Map();
   const singles = [];
-  for (const w of state.works) {
+  for (const w of list) {
     if (w.series) {
       if (!map.has(w.series)) map.set(w.series, []);
       map.get(w.series).push(w);
@@ -263,18 +302,27 @@ function renderShelf() {
   }
 
   const mode = state.settings.shelfMode === 'world' ? 'world' : 'series';
+  const look = state.settings.shelfLook === 'card' ? 'card' : 'spine';
+  const shelve = (items, cards) => look === 'spine' ? bookcaseOf(items.map(spineBook)) : shelfOf(cards);
+
   let html = `
     <div class="shelf-modes">
       <span class="modes-label">棚の並べ方</span>
       <button class="chip" data-mode="series" aria-pressed="${mode === 'series'}">連作・単巻</button>
       <button class="chip" data-mode="world" aria-pressed="${mode === 'world'}">叢書（まとまり）</button>
+      <span class="modes-label modes-gap">見た目</span>
+      <button class="chip" data-look="spine" aria-pressed="${look === 'spine'}">背表紙</button>
+      <button class="chip" data-look="card" aria-pressed="${look === 'card'}">目録札</button>
     </div>`;
 
   if (mode === 'world') {
     const { worlds, rest } = worldGroups();
     if (worlds.length) {
       html += sectionHead('叢 書 の 棚', worlds.length + ' collections');
-      html += shelfOf(worlds.map(worldCard));
+      html += shelve(worlds.map(t => ({
+        name: t.name, count: t.works.length, href: '/g/' + encodeURIComponent(t.name),
+        chars: t.works.reduce((n, w) => n + countChars(w.body), 0)
+      })), worlds.map(worldCard));
     } else {
       html += `<div class="section-head"><h2>叢 書 の 棚</h2><span class="count">まだ一つも</span></div>
         <p class="note">蔵書を開いて「手を入れる」から、<strong>叢書（まとまり）</strong>に同じ名前を入れると、
@@ -284,23 +332,37 @@ function renderShelf() {
         （空欄なら本編として扱います）。</p>`;
     }
     if (rest.length) {
-      html += sectionHead('叢書に入れていない蔵書', rest.length + ' volumes');
-      html += shelfOf(rest.map(w => workCard(w)));
+      const loose = groupList(rest);
+      html += sectionHead('叢書に入れていない蔵書', (loose.series.length + loose.singles.length) + ' volumes');
+      html += shelve(
+        [...loose.series.map(seriesItem), ...loose.singles.map(singleItem)],
+        [...loose.series.map(seriesCard), ...loose.singles.map(w => workCard(w))]);
     }
   } else {
     const { series, singles } = groups();
     if (series.length) {
       html += sectionHead('連 作 の 棚', series.length + ' series');
-      html += shelfOf(series.map(seriesCard));
+      html += shelve(series.map(seriesItem), series.map(seriesCard));
     }
     if (singles.length) {
       html += sectionHead('単 巻 の 棚', singles.length + ' volumes');
-      html += shelfOf(singles.map(w => workCard(w)));
+      html += shelve(singles.map(singleItem), singles.map(w => workCard(w)));
     }
   }
   v.innerHTML = html;
   bindCards();
   bindModes();
+}
+
+function seriesItem(t) {
+  return {
+    name: t.name, count: t.works.length, href: '/series/' + encodeURIComponent(t.name),
+    chars: t.works.reduce((n, w) => n + countChars(w.body), 0)
+  };
+}
+
+function singleItem(w) {
+  return { name: w.title, count: 1, href: '/w/' + encodeURIComponent(w.id), chars: countChars(w.body) };
 }
 
 function sectionHead(title, count) {
@@ -312,6 +374,11 @@ function shelfOf(cards) {
 function bindModes() {
   $$('[data-mode]').forEach(b => b.addEventListener('click', () => {
     state.settings.shelfMode = b.dataset.mode;
+    save();
+    renderShelf();
+  }));
+  $$('[data-look]').forEach(b => b.addEventListener('click', () => {
+    state.settings.shelfLook = b.dataset.look;
     save();
     renderShelf();
   }));
