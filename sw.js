@@ -1,6 +1,6 @@
 /* 書架 — service worker
    app shell を先に焼き付けておき、以後は棚の中身と同じく手元だけで動く。 */
-const VERSION = 'shoka-v12';
+const VERSION = 'shoka-v13';
 const SHELL = [
   './',
   './index.html',
@@ -50,7 +50,23 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // 資材はキャッシュ優先、裏で更新
+  // 骨組みの js と css は網を先に見る（更新直後に新旧が混ざらないように）
+  if (/\.(js|css)$/.test(url.pathname)) {
+    e.respondWith(
+      fetch(req)
+        .then(res => {
+          if (res && res.status === 200 && res.type === 'basic') {
+            const copy = res.clone();
+            caches.open(VERSION).then(c => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req, { ignoreSearch: true }))
+    );
+    return;
+  }
+
+  // そのほかの資材はキャッシュ優先、裏で更新
   e.respondWith(
     caches.match(req, { ignoreSearch: true }).then(hit => {
       const net = fetch(req).then(res => {
