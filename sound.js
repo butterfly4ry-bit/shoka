@@ -414,8 +414,8 @@ window.Sound = (function () {
 
       <div class="panel">
         <h3>音 盤 を 納 め る</h3>
-        <p>ドライブから「ファイル」に落とした曲を選んでください。mp3・m4a・wav などが納まります。</p>
-        <div class="btnrow">
+        <p class="one-line">ドライブから「ファイル」に落とした曲を選んでください。mp3・m4a・wav などが納まります。</p>
+        <div class="opt-row">
           <button class="btn primary" id="snd-pick">曲を選んで納める</button>
           <button class="btn" id="snd-pick-dir">フォルダごと納める</button>
         </div>
@@ -426,38 +426,25 @@ window.Sound = (function () {
       ${discs.length ? `
       <div class="panel">
         <h3>音 の 大 き さ</h3>
-        <p>耳もとの機器のいちばん小さい目盛りより、さらに絞れます。
-        小さい音は<strong>あらかじめ静かな写しを焼いて</strong>おき、鳴らすときはいつもの経路を通ります。
-        だから裏に回っても止まりません。</p>
-        <div class="btnrow">
-          ${LEVELS.map(l => `<button class="chip" data-level="${l.key}" aria-pressed="${pref.level === l.key}">${l.label}${l.key ? '（' + l.pct + '%）' : ''}</button>`).join('')}
+        <p class="one-line">静かな写しを先に焼いておく方式なので、絞っても裏で止まりません。</p>
+        <div class="opt-row">
+          ${LEVELS.map(l => `<button class="chip" data-level="${l.key}" aria-pressed="${pref.level === l.key}">${l.label}${l.key ? '　' + l.pct + '%' : ''}</button>`).join('')}
         </div>
-        <p class="hint" style="margin-top:12px">
-          ${LEVELS.slice(1).map(l => {
-            const done = bakedCount(l.key);
-            return `${l.pct}% の写し … ${done} / ${discs.length} 曲${done ? '（' + fmtSize(bakedBytes(l.key)) + '）' : ''}`;
-          }).join('<br>')}
-        </p>
         ${pref.level && bakedCount(pref.level) < discs.length ? `
-          <div class="btnrow" style="margin-top:10px">
+          <div class="opt-row" style="margin-top:10px">
             <button class="btn primary" id="snd-bake">${levelOf(pref.level).pct}% の写しを焼く（${discs.length - bakedCount(pref.level)} 曲）</button>
-          </div>
-          <p class="hint" style="margin-top:8px">写しの無い曲は、そのままの大きさで鳴ります。
-          写しは元の 5〜10 倍ほどの場所を取ります（音を解いた素のままの形で持つため）。</p>
-        ` : ''}
-        ${LEVELS.slice(1).some(l => bakedCount(l.key)) ? `
-          <div class="btnrow" style="margin-top:10px">
-            ${LEVELS.slice(1).filter(l => bakedCount(l.key)).map(l =>
-              `<button class="btn ghost" data-drop-level="${l.key}">${l.pct}% の写しを捨てる</button>`).join('')}
           </div>` : ''}
+        <p class="status">${LEVELS.slice(1).map(l => `${l.pct}% の写し ${bakedCount(l.key)} / ${discs.length} 曲`).join('　·　')}</p>
       </div>
 
-      <div class="shelf-modes" style="margin:22px 0 4px">
-        <span class="modes-label">鳴らし方</span>
-        <button class="chip" data-rep="album" aria-pressed="${pref.repeat === 'album'}">一揃い繰り返し</button>
-        <button class="chip" data-rep="one" aria-pressed="${pref.repeat === 'one'}">一曲繰り返し</button>
-        <button class="chip" data-rep="none" aria-pressed="${pref.repeat === 'none'}">繰り返さない</button>
-        <button class="chip" id="snd-shuffle" aria-pressed="${pref.shuffle}">順不同</button>
+      <div class="panel">
+        <h3>鳴 ら し 方</h3>
+        <div class="opt-row">
+          <button class="chip" data-rep="album" aria-pressed="${pref.repeat === 'album'}">一揃い繰り返し</button>
+          <button class="chip" data-rep="one" aria-pressed="${pref.repeat === 'one'}">一曲繰り返し</button>
+          <button class="chip" data-rep="none" aria-pressed="${pref.repeat === 'none'}">繰り返さない</button>
+          <button class="chip" id="snd-shuffle" aria-pressed="${pref.shuffle}">順不同</button>
+        </div>
       </div>` : ''}
 
       ${list.map(al => `
@@ -475,12 +462,23 @@ window.Sound = (function () {
               </span>
             </button></li>`).join('')}
         </ul>
-        <div class="form-actions" style="margin:10px 0 24px">
+        <div class="opt-row album-acts">
           <button class="btn ghost" data-play-album="${esc(al.name)}">この一揃いを鳴らす</button>
           <button class="btn ghost" data-rename-album="${esc(al.name)}">名を改める</button>
-          <span class="spacer"></span>
           <button class="btn danger" data-drop-album="${esc(al.name)}">この一揃いを捨てる</button>
         </div>`).join('')}
+
+      ${discs.length ? `
+      <div class="panel">
+        <h3>手 入 れ</h3>
+        <p class="one-line">焼いた写しは、要らなくなればいつでも捨てられます。元の曲はそのまま残ります。</p>
+        ${LEVELS.slice(1).some(l => bakedCount(l.key)) ? `
+          <div class="opt-row">
+            ${LEVELS.slice(1).filter(l => bakedCount(l.key)).map(l =>
+              `<button class="btn ghost" data-drop-level="${l.key}">${l.pct}% の写しを捨てる（${fmtSize(bakedBytes(l.key))}）</button>`).join('')}
+          </div>` : '<p class="status">まだ写しはありません。</p>'}
+        <p class="status" id="snd-usage">この端末で使っている場所を調べています…</p>
+      </div>` : ''}
 
       ${!discs.length ? `
         <div class="empty">
@@ -489,6 +487,15 @@ window.Sound = (function () {
           <p>iPhone なら、ドライブのフォルダを「ファイル」に保存してから<br>
           「曲を選んで納める」で選びます。パソコンなら、フォルダごと納められます。</p>
         </div>` : ''}`;
+
+    // 使っている場所を後から書き足す
+    const usage = q('#snd-usage', view);
+    if (usage && navigator.storage?.estimate) {
+      navigator.storage.estimate().then(e => {
+        usage.textContent = `この端末で使っている場所 ${fmtSize(e.usage || 0)}`
+          + (e.quota ? `　·　まだ置ける目安 ${fmtSize(Math.max(0, e.quota - (e.usage || 0)))}` : '');
+      }).catch(() => { usage.textContent = ''; });
+    } else if (usage) usage.textContent = '';
 
     qa('[data-go]', view).forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.go; }));
     q('#snd-pick').addEventListener('click', () => q('#snd-file').click());
