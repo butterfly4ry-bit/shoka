@@ -53,16 +53,49 @@ window.Sound = (function () {
     }
   }
 
+  /* iOS は裏に回ると音声の経路ごと眠らせる。
+     耳に聞こえない極小の音を別の口で流し続けて、目を覚まさせておく。 */
+  const keepEl = () => q('#keepalive');
+
+  function silentTrack(seconds) {
+    const rate = 8000, n = rate * seconds;
+    const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * 2, true);
+    // 十六ビットの一番下の桁だけを揺らす（およそ -90dB。耳には届かない）
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 400 < 200 ? 1 : -1, true);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+
+  function keepAlive(on) {
+    const k = keepEl();
+    if (!k) return;
+    if (on) {
+      if (!k.src) k.src = silentTrack(3);
+      if (k.paused) k.play().catch(() => {});
+    } else if (!k.paused) k.pause();
+  }
+
+  // Web Audio に通しているあいだだけ、下敷きを敷く
+  function syncKeepAlive() {
+    keepAlive(!!ctx && !el().paused);
+  }
+
   function resumeCtx() {
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
   }
 
   function applyVolume() {
     const v = pref.volume == null ? 1 : pref.volume;
-    if (v >= 0.999 && !ctx) { el().volume = 1; return; }   // まだ絞っていない＝経路を作らない
+    if (v >= 0.999 && !ctx) { el().volume = 1; keepAlive(false); return; }   // まだ絞っていない＝経路を作らない
     if (buildGraph()) {
       gainNode.gain.value = curve(v);
       resumeCtx();
+      syncKeepAlive();
     } else {
       el().volume = v;      // Web Audio が無い端末のための控え
     }
@@ -503,7 +536,10 @@ window.Sound = (function () {
     a.addEventListener('ended', () => next(true));
     a.addEventListener('error', () => toast('この音盤は鳴らせませんでした'));
 
-    a.addEventListener('play', resumeCtx);
+    a.addEventListener('play', () => { resumeCtx(); syncKeepAlive(); });
+    a.addEventListener('pause', () => keepAlive(false));
+    // 下敷きは裏でも時を刻む。その拍に合わせて、眠った経路を起こし直す。
+    keepEl().addEventListener('timeupdate', resumeCtx);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCtx(); });
     applyVolume();
 
