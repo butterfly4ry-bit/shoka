@@ -17,7 +17,8 @@ window.Sound = (function () {
   let queue = [];          // いま鳴らしている並び
   let at = -1;             // queue の中の位置
   let objectUrl = null;
-  let pref = { repeat: 'album', shuffle: false };   // repeat: none / one / album
+  let pref = { repeat: 'album', shuffle: false, volume: 1 };   // repeat: none / one / album
+  let ctx = null, gainNode = null, srcNode = null;
 
   /* ---------- 覚書 ---------- */
   function loadPref() {
@@ -25,6 +26,55 @@ window.Sound = (function () {
   }
   function savePref() {
     try { localStorage.setItem(PREF_KEY, JSON.stringify(pref)); } catch (e) {}
+  }
+
+  /* ---------- 音の大きさ ----------
+     iPhone は audio.volume を受け付けないので、絞るときだけ Web Audio に通す。
+     100% のままなら経路を作らない（裏での鳴り続けやすさを損なわないため）。 */
+
+  // つまみの目盛りを、耳に合う曲がり方に直す（小さい側を細かく）
+  const curve = v => Math.pow(Math.max(0, Math.min(1, v)), 2.2);
+
+  function buildGraph() {
+    if (ctx) return true;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try {
+      ctx = new AC();
+      srcNode = ctx.createMediaElementSource(el());
+      gainNode = ctx.createGain();
+      srcNode.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      return true;
+    } catch (e) {
+      console.warn('音量の経路を作れません', e);
+      ctx = null;
+      return false;
+    }
+  }
+
+  function resumeCtx() {
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  }
+
+  function applyVolume() {
+    const v = pref.volume == null ? 1 : pref.volume;
+    if (v >= 0.999 && !ctx) { el().volume = 1; return; }   // まだ絞っていない＝経路を作らない
+    if (buildGraph()) {
+      gainNode.gain.value = curve(v);
+      resumeCtx();
+    } else {
+      el().volume = v;      // Web Audio が無い端末のための控え
+    }
+  }
+
+  function setVolume(v) {
+    pref.volume = Math.max(0, Math.min(1, v));
+    savePref();
+    applyVolume();
+    const n = q('#snd-vol-n');
+    if (n) n.textContent = Math.round(pref.volume * 100) + '%';
+    qa('[data-vol]').forEach(b => b.setAttribute('aria-pressed', String(Math.round(pref.volume * 100) === Number(b.dataset.vol))));
   }
 
   /* ---------- 蔵（IndexedDB） ---------- */
@@ -193,6 +243,8 @@ window.Sound = (function () {
     objectUrl = URL.createObjectURL(blob);
     const a = el();
     a.src = objectUrl;
+    applyVolume();
+    resumeCtx();
     try { await a.play(); } catch (e) { console.warn('鳴らせませんでした', e); }
     setSession(t);
     paint();
@@ -215,7 +267,7 @@ window.Sound = (function () {
   function toggle() {
     const a = el();
     if (!a.src) { const al = albums()[0]; if (al) playList(al.tracks); return; }
-    if (a.paused) a.play().catch(() => {}); else a.pause();
+    if (a.paused) { resumeCtx(); a.play().catch(() => {}); } else a.pause();
   }
 
   /* ---------- ロック画面の操作盤 ---------- */
@@ -297,6 +349,26 @@ window.Sound = (function () {
       </div>
 
       ${discs.length ? `
+      <div class="panel">
+        <h3>音 の 大 き さ</h3>
+        <p>耳もとの機器のいちばん小さい目盛りより、さらに絞れます。小さい側ほど細かく効きます。</p>
+        <div class="vol-row">
+          <span class="vol-mark">◦</span>
+          <input id="snd-vol" type="range" min="0" max="100" step="1" value="${Math.round((pref.volume == null ? 1 : pref.volume) * 100)}"
+            aria-label="音の大きさ">
+          <span class="vol-mark big">◉</span>
+          <span id="snd-vol-n" class="vol-num">${Math.round((pref.volume == null ? 1 : pref.volume) * 100)}%</span>
+        </div>
+        <div class="btnrow" style="margin-top:10px">
+          ${[100, 75, 50, 25, 10].map(v => `<button class="chip" data-vol="${v}" aria-pressed="${Math.round((pref.volume == null ? 1 : pref.volume) * 100) === v}">${v}%</button>`).join('')}
+        </div>
+        <p class="hint" style="margin-top:12px">
+          100% のあいだは、iPhone でいちばん途切れにくい鳴らし方のままです。
+          絞ると別の経路に通すため、裏に回したとき止まることがあります。
+          そのときは 100% に戻し、いちど閉じて開き直してください。
+        </p>
+      </div>
+
       <div class="shelf-modes" style="margin:22px 0 4px">
         <span class="modes-label">鳴らし方</span>
         <button class="chip" data-rep="album" aria-pressed="${pref.repeat === 'album'}">一揃い繰り返し</button>
@@ -381,6 +453,15 @@ window.Sound = (function () {
         renderPage(view);
       });
     }));
+    const vol = q('#snd-vol', view);
+    if (vol) {
+      vol.addEventListener('input', e => setVolume(Number(e.target.value) / 100));
+      qa('[data-vol]', view).forEach(b => b.addEventListener('click', () => {
+        vol.value = b.dataset.vol;
+        setVolume(Number(b.dataset.vol) / 100);
+      }));
+    }
+
     qa('[data-rename-album]', view).forEach(b => b.addEventListener('click', () => {
       const name = b.dataset.renameAlbum;
       promptDialog({
@@ -422,6 +503,10 @@ window.Sound = (function () {
     a.addEventListener('ended', () => next(true));
     a.addEventListener('error', () => toast('この音盤は鳴らせませんでした'));
 
+    a.addEventListener('play', resumeCtx);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCtx(); });
+    applyVolume();
+
     q('#np-play').addEventListener('click', toggle);
     q('#np-prev').addEventListener('click', prev);
     q('#np-next').addEventListener('click', () => next(false));
@@ -446,5 +531,12 @@ window.Sound = (function () {
     if (location.hash === '#/sound') renderPage(document.getElementById('view'));
   }
 
-  return { init, renderPage, addFiles, count: () => discs.length };
+  return {
+    init, renderPage, addFiles,
+    count: () => discs.length,
+    volume: () => (pref.volume == null ? 1 : pref.volume),
+    // 実際に効いている音量と、経路の状態（確かめ用）
+    gain: () => (gainNode ? gainNode.gain.value : null),
+    route: () => (ctx ? ctx.state : 'plain')
+  };
 })();
