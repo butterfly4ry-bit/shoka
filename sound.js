@@ -280,7 +280,9 @@ window.Sound = (function () {
         <div class="stamp">蓄音<br>GRAMOPHONE</div>
         <h1>蓄 音 機</h1>
         <p class="lede">読みながら鳴らしておけます。音盤はこの端末の中に納められ、電波がなくても回ります。</p>
-        <p class="meta">音盤 ${discs.length} 枚 &middot; ${fmtSize(total)}${discs.length ? ' &middot; ' + list.length + ' 揃い' : ''}</p>
+        <p class="meta">${discs.length
+          ? `音盤 ${discs.length} 枚 &middot; ${list.length} 揃い &middot; ${fmtSize(total)}`
+          : 'まだ一枚も納めていません'}</p>
       </div>
 
       <div class="panel">
