@@ -33,6 +33,7 @@
       </label>
       <button class="btn" id="btn-new">＋ 収蔵する</button>
       <button class="btn ghost" id="btn-archive">書庫</button>
+      <button class="btn ghost" id="btn-sound">蓄音機</button>
     </div>
   </div>
   <div class="rule" aria-hidden="true"></div>
@@ -47,9 +48,35 @@
   <button class="linkbtn" id="btn-install" hidden>この書架を端末に置く</button>
 </footer>
 
+<audio id="player" playsinline preload="metadata"></audio>
+
+<div id="nowplaying" class="nowplaying" hidden>
+  <button class="np-open np-disc" aria-label="蓄音機をひらく">
+    <svg class="disc" viewBox="0 0 48 48" aria-hidden="true">
+      <circle cx="24" cy="24" r="23" fill="#1b1611"/>
+      <circle cx="24" cy="24" r="18.5" fill="none" stroke="rgba(233,214,175,.14)"/>
+      <circle cx="24" cy="24" r="14.5" fill="none" stroke="rgba(233,214,175,.12)"/>
+      <circle cx="24" cy="24" r="10.5" fill="none" stroke="rgba(233,214,175,.10)"/>
+      <circle cx="24" cy="24" r="7" fill="#7a2f26"/>
+      <circle cx="24" cy="24" r="1.6" fill="#ece0c8"/>
+    </svg>
+  </button>
+  <button class="np-open np-text">
+    <span id="np-name" class="np-name"></span>
+    <span id="np-album" class="np-album"></span>
+  </button>
+  <div class="np-ctrl">
+    <button id="np-prev" aria-label="前の曲">◀◀</button>
+    <button id="np-play" aria-label="鳴らす">▶</button>
+    <button id="np-next" aria-label="次の曲">▶▶</button>
+  </div>
+  <div id="np-seek" class="np-seek"><span id="np-fill"></span></div>
+</div>
+
 <div id="dialog-layer"></div>
 <div id="toast" class="toast" hidden></div>
 
+<script src="./sound.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

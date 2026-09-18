@@ -310,6 +310,7 @@ function route() {
   if (h.startsWith('/edit/'))   return renderEditor(decodeURIComponent(h.slice(6)));
   if (h === '/new')             return renderEditor(null);
   if (h === '/archive')         return renderArchive();
+  if (h === '/sound')           return Sound.renderPage(view());
   return renderShelf();
 }
 
@@ -1137,6 +1138,7 @@ function init() {
   load();
   $('#btn-new').addEventListener('click', () => go('/new'));
   $('#btn-archive').addEventListener('click', () => go('/archive'));
+  $('#btn-sound').addEventListener('click', () => go('/sound'));
   $('#btn-home').addEventListener('click', () => {
     $('#search').value = '';
     query = '';
@@ -1170,6 +1172,7 @@ function init() {
     deferredInstall = null; $('#btn-install').hidden = true;
   });
 
+  Sound.init();
   handleImportHash().then(handled => { if (!handled) render(); else updateStat(); });
 
   if ('serviceWorker' in navigator) {
