@@ -17,8 +17,7 @@ window.Sound = (function () {
   let queue = [];          // いま鳴らしている並び
   let at = -1;             // queue の中の位置
   let objectUrl = null;
-  let pref = { repeat: 'album', shuffle: false, volume: 1 };   // repeat: none / one / album
-  let ctx = null, gainNode = null, srcNode = null;
+  let pref = { repeat: 'album', shuffle: false, level: '' };   // repeat: none / one / album、level: '' / '75' / '50'
 
   /* ---------- 覚書 ---------- */
   function loadPref() {
@@ -29,85 +28,113 @@ window.Sound = (function () {
   }
 
   /* ---------- 音の大きさ ----------
-     iPhone は audio.volume を受け付けないので、絞るときだけ Web Audio に通す。
-     100% のままなら経路を作らない（裏での鳴り続けやすさを損なわないため）。 */
+     iPhone は audio.volume を受け付けず、Web Audio に通すと裏で眠らされる。
+     そこで、あらかじめ静かな写しを焼いておき、再生はいつもの経路のまま行う。 */
 
-  // つまみの目盛りを、耳に合う曲がり方に直す（小さい側を細かく）
-  const curve = v => Math.pow(Math.max(0, Math.min(1, v)), 2.2);
+  const LEVELS = [
+    { key: '',   pct: 100, gain: 1,     label: 'そのまま' },
+    { key: '75', pct: 75,  gain: 0.531, label: '小さめ' },
+    { key: '50', pct: 50,  gain: 0.217, label: 'とても小さく' }
+  ];
+  const levelOf = key => LEVELS.find(l => l.key === key) || LEVELS[0];
+  const audioKey = (id, key) => key ? id + '@' + key : id;
 
-  function buildGraph() {
-    if (ctx) return true;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return false;
-    try {
-      ctx = new AC();
-      srcNode = ctx.createMediaElementSource(el());
-      gainNode = ctx.createGain();
-      srcNode.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      return true;
-    } catch (e) {
-      console.warn('音量の経路を作れません', e);
-      ctx = null;
-      return false;
-    }
-  }
+  let baking = null;   // 焼いている最中の控え（取りやめ用）
 
-  /* iOS は裏に回ると音声の経路ごと眠らせる。
-     耳に聞こえない極小の音を別の口で流し続けて、目を覚まさせておく。 */
-  const keepEl = () => q('#keepalive');
-
-  function silentTrack(seconds) {
-    const rate = 8000, n = rate * seconds;
-    const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  // 音の板を十六ビットの波形に書き出す。ここで音量を焼き込む。
+  function encodeWav(buffer, gain) {
+    const ch = Math.min(2, buffer.numberOfChannels);
+    const rate = buffer.sampleRate;
+    const n = buffer.length;
+    const bytes = 44 + n * ch * 2;
+    const out = new ArrayBuffer(bytes);
+    const v = new DataView(out);
     const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
-    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
-    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
-    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-    str(36, 'data'); v.setUint32(40, n * 2, true);
-    // 十六ビットの一番下の桁だけを揺らす（およそ -90dB。耳には届かない）
-    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 400 < 200 ? 1 : -1, true);
-    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
-  }
+    str(0, 'RIFF'); v.setUint32(4, bytes - 8, true); str(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, ch, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * ch * 2, true);
+    v.setUint16(32, ch * 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * ch * 2, true);
 
-  function keepAlive(on) {
-    const k = keepEl();
-    if (!k) return;
-    if (on) {
-      if (!k.src) k.src = silentTrack(3);
-      if (k.paused) k.play().catch(() => {});
-    } else if (!k.paused) k.pause();
-  }
-
-  // Web Audio に通しているあいだだけ、下敷きを敷く
-  function syncKeepAlive() {
-    keepAlive(!!ctx && !el().paused);
-  }
-
-  function resumeCtx() {
-    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
-  }
-
-  function applyVolume() {
-    const v = pref.volume == null ? 1 : pref.volume;
-    if (v >= 0.999 && !ctx) { el().volume = 1; keepAlive(false); return; }   // まだ絞っていない＝経路を作らない
-    if (buildGraph()) {
-      gainNode.gain.value = curve(v);
-      resumeCtx();
-      syncKeepAlive();
-    } else {
-      el().volume = v;      // Web Audio が無い端末のための控え
+    const chans = [];
+    for (let c = 0; c < ch; c++) chans.push(buffer.getChannelData(c));
+    let o = 44;
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < ch; c++) {
+        let x = chans[c][i] * gain;
+        if (x > 1) x = 1; else if (x < -1) x = -1;
+        v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+        o += 2;
+      }
     }
+    return new Blob([out], { type: 'audio/wav' });
   }
 
-  function setVolume(v) {
-    pref.volume = Math.max(0, Math.min(1, v));
-    savePref();
-    applyVolume();
-    const n = q('#snd-vol-n');
-    if (n) n.textContent = Math.round(pref.volume * 100) + '%';
-    qa('[data-vol]').forEach(b => b.setAttribute('aria-pressed', String(Math.round(pref.volume * 100) === Number(b.dataset.vol))));
+  // 一曲ぶんの写しを焼く。解くためだけに Web Audio を借り、すぐ返す。
+  async function bakeOne(meta, level) {
+    const src = await getAudio(meta.id);
+    if (!src) return 0;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) throw new Error('この端末では写しを焼けません');
+    const ctx = new AC();
+    let blob;
+    try {
+      const buf = await ctx.decodeAudioData(await src.arrayBuffer());
+      blob = encodeWav(buf, level.gain);
+    } finally {
+      try { await ctx.close(); } catch (e) {}
+    }
+    await new Promise((res, rej) => {
+      const t = tx(['meta', 'audio'], 'readwrite');
+      t.objectStore('audio').put(blob, audioKey(meta.id, level.key));
+      meta.baked = Array.from(new Set([...(meta.baked || []), level.key]));
+      meta['size' + level.key] = blob.size;
+      t.objectStore('meta').put(meta);
+      t.oncomplete = res;
+      t.onerror = () => rej(t.error);
+    });
+    return blob.size;
+  }
+
+  async function bakeAll(levelKey, onStep) {
+    const level = levelOf(levelKey);
+    const todo = discs.filter(d => !(d.baked || []).includes(level.key));
+    baking = { stop: false };
+    let done = 0, bytes = 0;
+    for (const d of todo) {
+      if (baking.stop) break;
+      onStep(++done, todo.length, d.name);
+      try { bytes += await bakeOne(d, level); }
+      catch (e) { console.warn('焼けませんでした', d.name, e); }
+      await new Promise(r => setTimeout(r, 0));   // 画面を固まらせない
+    }
+    baking = null;
+    discs = await allMeta();
+    return { done, bytes };
+  }
+
+  async function dropBaked(levelKey) {
+    const ids = discs.filter(d => (d.baked || []).includes(levelKey)).map(d => d.id);
+    await new Promise((res, rej) => {
+      const t = tx(['meta', 'audio'], 'readwrite');
+      for (const id of ids) t.objectStore('audio').delete(audioKey(id, levelKey));
+      for (const d of discs) {
+        if (!(d.baked || []).includes(levelKey)) continue;
+        d.baked = d.baked.filter(k => k !== levelKey);
+        delete d['size' + levelKey];
+        t.objectStore('meta').put(d);
+      }
+      t.oncomplete = res;
+      t.onerror = () => rej(t.error);
+    });
+    discs = await allMeta();
+  }
+
+  function bakedCount(levelKey) {
+    return discs.filter(d => (d.baked || []).includes(levelKey)).length;
+  }
+  function bakedBytes(levelKey) {
+    return discs.reduce((n, d) => n + (d['size' + levelKey] || 0), 0);
   }
 
   /* ---------- 蔵（IndexedDB） ---------- */
@@ -266,19 +293,24 @@ window.Sound = (function () {
     await playAt(at);
   }
 
-  async function playAt(i) {
+  async function playAt(i, seekTo, autoplay) {
     const t = queue[i];
     if (!t) return;
     at = i;
-    const blob = await getAudio(t.id);
+    // 選んだ大きさの写しがあればそれを、無ければそのままの音を鳴らす
+    const key = (t.baked || []).includes(pref.level) ? pref.level : '';
+    const blob = await getAudio(audioKey(t.id, key));
     if (!blob) { toast('音盤が見つかりません'); return; }
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(blob);
     const a = el();
     a.src = objectUrl;
-    applyVolume();
-    resumeCtx();
-    try { await a.play(); } catch (e) { console.warn('鳴らせませんでした', e); }
+    if (seekTo) {
+      a.addEventListener('loadedmetadata', () => { try { a.currentTime = seekTo; } catch (e) {} }, { once: true });
+    }
+    if (autoplay !== false) {
+      try { await a.play(); } catch (e) { console.warn('鳴らせませんでした', e); }
+    }
     setSession(t);
     paint();
   }
@@ -300,7 +332,17 @@ window.Sound = (function () {
   function toggle() {
     const a = el();
     if (!a.src) { const al = albums()[0]; if (al) playList(al.tracks); return; }
-    if (a.paused) { resumeCtx(); a.play().catch(() => {}); } else a.pause();
+    if (a.paused) a.play().catch(() => {}); else a.pause();
+  }
+
+  async function setLevel(key) {
+    pref.level = key;
+    savePref();
+    const t = queue[at];
+    if (t) {
+      const a = el();
+      await playAt(at, a.currentTime, !a.paused);
+    }
   }
 
   /* ---------- ロック画面の操作盤 ---------- */
@@ -384,22 +426,30 @@ window.Sound = (function () {
       ${discs.length ? `
       <div class="panel">
         <h3>音 の 大 き さ</h3>
-        <p>耳もとの機器のいちばん小さい目盛りより、さらに絞れます。小さい側ほど細かく効きます。</p>
-        <div class="vol-row">
-          <span class="vol-mark">◦</span>
-          <input id="snd-vol" type="range" min="0" max="100" step="1" value="${Math.round((pref.volume == null ? 1 : pref.volume) * 100)}"
-            aria-label="音の大きさ">
-          <span class="vol-mark big">◉</span>
-          <span id="snd-vol-n" class="vol-num">${Math.round((pref.volume == null ? 1 : pref.volume) * 100)}%</span>
-        </div>
-        <div class="btnrow" style="margin-top:10px">
-          ${[100, 75, 50, 25, 10].map(v => `<button class="chip" data-vol="${v}" aria-pressed="${Math.round((pref.volume == null ? 1 : pref.volume) * 100) === v}">${v}%</button>`).join('')}
+        <p>耳もとの機器のいちばん小さい目盛りより、さらに絞れます。
+        小さい音は<strong>あらかじめ静かな写しを焼いて</strong>おき、鳴らすときはいつもの経路を通ります。
+        だから裏に回っても止まりません。</p>
+        <div class="btnrow">
+          ${LEVELS.map(l => `<button class="chip" data-level="${l.key}" aria-pressed="${pref.level === l.key}">${l.label}${l.key ? '（' + l.pct + '%）' : ''}</button>`).join('')}
         </div>
         <p class="hint" style="margin-top:12px">
-          100% のあいだは、iPhone でいちばん途切れにくい鳴らし方のままです。
-          絞ると別の経路に通すため、裏に回したとき止まることがあります。
-          そのときは 100% に戻し、いちど閉じて開き直してください。
+          ${LEVELS.slice(1).map(l => {
+            const done = bakedCount(l.key);
+            return `${l.pct}% の写し … ${done} / ${discs.length} 曲${done ? '（' + fmtSize(bakedBytes(l.key)) + '）' : ''}`;
+          }).join('<br>')}
         </p>
+        ${pref.level && bakedCount(pref.level) < discs.length ? `
+          <div class="btnrow" style="margin-top:10px">
+            <button class="btn primary" id="snd-bake">${levelOf(pref.level).pct}% の写しを焼く（${discs.length - bakedCount(pref.level)} 曲）</button>
+          </div>
+          <p class="hint" style="margin-top:8px">写しの無い曲は、そのままの大きさで鳴ります。
+          写しは元の 5〜10 倍ほどの場所を取ります（音を解いた素のままの形で持つため）。</p>
+        ` : ''}
+        ${LEVELS.slice(1).some(l => bakedCount(l.key)) ? `
+          <div class="btnrow" style="margin-top:10px">
+            ${LEVELS.slice(1).filter(l => bakedCount(l.key)).map(l =>
+              `<button class="btn ghost" data-drop-level="${l.key}">${l.pct}% の写しを捨てる</button>`).join('')}
+          </div>` : ''}
       </div>
 
       <div class="shelf-modes" style="margin:22px 0 4px">
@@ -486,14 +536,43 @@ window.Sound = (function () {
         renderPage(view);
       });
     }));
-    const vol = q('#snd-vol', view);
-    if (vol) {
-      vol.addEventListener('input', e => setVolume(Number(e.target.value) / 100));
-      qa('[data-vol]', view).forEach(b => b.addEventListener('click', () => {
-        vol.value = b.dataset.vol;
-        setVolume(Number(b.dataset.vol) / 100);
-      }));
-    }
+    qa('[data-level]', view).forEach(b => b.addEventListener('click', async () => {
+      await setLevel(b.dataset.level);
+      renderPage(view);
+    }));
+
+    const bake = q('#snd-bake', view);
+    if (bake) bake.addEventListener('click', () => {
+      const level = levelOf(pref.level);
+      const todo = discs.length - bakedCount(level.key);
+      const el2 = dialog(`
+        <h3>${level.pct}% の写しを焼く</h3>
+        <p><strong>${todo} 曲</strong>の静かな写しを作ります。曲の長さによっては数分かかります。
+        焼いているあいだ、この画面は開いたままにしてください。</p>
+        <p class="mono" id="bake-log">はじめます…</p>
+        <div class="form-actions">
+          <button class="btn ghost" id="bake-stop">とりやめる</button>
+        </div>`);
+      const log = q('#bake-log', el2);
+      q('#bake-stop', el2).addEventListener('click', () => { if (baking) baking.stop = true; closeDialog(); });
+      bakeAll(level.key, (i, n, name) => { log.textContent = `${i} / ${n} 曲目　${name}`; })
+        .then(r => {
+          closeDialog();
+          toast(r.done + ' 曲の写しを焼きました');
+          renderPage(view);
+        })
+        .catch(e => { closeDialog(); console.error(e); toast('写しを焼けませんでした'); });
+    });
+
+    qa('[data-drop-level]', view).forEach(b => b.addEventListener('click', () => {
+      const key = b.dataset.dropLevel;
+      confirmDialog('写しを捨てますか', `${levelOf(key).pct}% の写し ${bakedCount(key)} 曲ぶん（${fmtSize(bakedBytes(key))}）を取り除きます。元の音はそのまま残ります。`, async () => {
+        await dropBaked(key);
+        if (pref.level === key) await setLevel('');
+        toast('写しを捨てました');
+        renderPage(view);
+      });
+    }));
 
     qa('[data-rename-album]', view).forEach(b => b.addEventListener('click', () => {
       const name = b.dataset.renameAlbum;
@@ -536,13 +615,6 @@ window.Sound = (function () {
     a.addEventListener('ended', () => next(true));
     a.addEventListener('error', () => toast('この音盤は鳴らせませんでした'));
 
-    a.addEventListener('play', () => { resumeCtx(); syncKeepAlive(); });
-    a.addEventListener('pause', () => keepAlive(false));
-    // 下敷きは裏でも時を刻む。その拍に合わせて、眠った経路を起こし直す。
-    keepEl().addEventListener('timeupdate', resumeCtx);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCtx(); });
-    applyVolume();
-
     q('#np-play').addEventListener('click', toggle);
     q('#np-prev').addEventListener('click', prev);
     q('#np-next').addEventListener('click', () => next(false));
@@ -570,9 +642,9 @@ window.Sound = (function () {
   return {
     init, renderPage, addFiles,
     count: () => discs.length,
-    volume: () => (pref.volume == null ? 1 : pref.volume),
-    // 実際に効いている音量と、経路の状態（確かめ用）
-    gain: () => (gainNode ? gainNode.gain.value : null),
-    route: () => (ctx ? ctx.state : 'plain')
+    // 確かめ用：いま選んでいる段階と、写しの焼け具合
+    level: () => pref.level,
+    baked: () => LEVELS.slice(1).map(l => ({ pct: l.pct, done: bakedCount(l.key), bytes: bakedBytes(l.key) })),
+    playingSrc: () => (queue[at] ? ((queue[at].baked || []).includes(pref.level) ? pref.level || '原音' : '原音') : null)
   };
 })();

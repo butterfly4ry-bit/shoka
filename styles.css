@@ -602,26 +602,3 @@ body.has-player .footer{ padding-bottom:calc(92px + env(safe-area-inset-bottom))
 .track.now .ttl{ color:var(--oxblood); }
 .track.now .num::after{ content:" ◎"; }
 
-/* 音の大きさのつまみ */
-.vol-row{ display:flex; align-items:center; gap:10px; }
-.vol-mark{ font-size:11px; color:var(--ink-faint); }
-.vol-mark.big{ font-size:14px; }
-.vol-num{
-  font-family:var(--sans); font-size:11px; letter-spacing:.08em; color:var(--ink-soft);
-  min-width:3.4em; text-align:right;
-}
-#snd-vol{
-  flex:1 1 auto; -webkit-appearance:none; appearance:none;
-  height:3px; border-radius:2px; background:var(--rule); outline:none; margin:0;
-}
-#snd-vol::-webkit-slider-thumb{
-  -webkit-appearance:none; appearance:none;
-  width:20px; height:20px; border-radius:50%;
-  background:radial-gradient(circle at 34% 30%, #c9a961, #7a5a2c 70%);
-  border:1px solid #4a3620; box-shadow:0 1px 3px rgba(40,27,15,.5); cursor:pointer;
-}
-#snd-vol::-moz-range-thumb{
-  width:20px; height:20px; border-radius:50%;
-  background:radial-gradient(circle at 34% 30%, #c9a961, #7a5a2c 70%);
-  border:1px solid #4a3620; box-shadow:0 1px 3px rgba(40,27,15,.5); cursor:pointer;
-}
