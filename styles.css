@@ -655,3 +655,117 @@ body.has-player .footer{ padding-bottom:calc(92px + env(safe-area-inset-bottom))
 .run[data-folded="true"] .toc{ display:none; }
 .run .toc{ border-top:1px dotted var(--rule-soft); }
 .run .toc button{ padding-left:4px; }
+
+/* ==========================================================================
+   棚 の 札（タブ）
+   ========================================================================== */
+.shelf-tabs{
+  display:flex; gap:5px; align-items:flex-end; flex-wrap:wrap;
+  margin:0 0 18px; border-bottom:1px solid var(--rule);
+}
+.shelf-tab{
+  position:relative; top:1px;
+  display:flex; align-items:baseline; gap:7px;
+  font-family:var(--serif); font-size:14.5px; letter-spacing:.16em;
+  padding:8px 15px 7px;
+  border:1px solid var(--rule); border-bottom:0; border-radius:3px 3px 0 0;
+  background:linear-gradient(180deg, var(--paper-2), var(--paper-3));
+  color:var(--ink-faint); cursor:pointer;
+}
+.shelf-tab:hover{ color:var(--ink-soft); }
+.shelf-tab .tab-n{ font-family:var(--sans); font-size:10px; letter-spacing:.06em; opacity:.7; }
+.shelf-tab[aria-selected="true"]{
+  background:var(--card); color:var(--ink);
+  box-shadow:inset 0 2px 0 var(--oxblood);
+  padding-bottom:8px;
+}
+.shelf-tab.setup{
+  margin-left:auto; border-color:transparent; background:none;
+  font-family:var(--sans); font-size:11px; letter-spacing:.22em; color:var(--ink-faint);
+}
+.shelf-tab.setup:hover{ color:var(--oxblood); }
+@media (max-width:560px){
+  .shelf-tab{ font-size:13.5px; padding:7px 12px 6px; letter-spacing:.1em; }
+  .shelf-tab.setup{ font-size:10.5px; letter-spacing:.16em; }
+}
+
+/* ==========================================================================
+   装い：黒　檀（ゴシック）
+   鉛色の紙、黒檀の革、銀の箔。古書の棚より硬く、冷たい。
+   ========================================================================== */
+body[data-theme="gothic"]{
+  --paper:        #d8d4cc;
+  --paper-2:      #cbc7bf;
+  --paper-3:      #bdb9b1;
+  --card:         #e3e0d9;
+  --ink:          #242329;
+  --ink-soft:     #4d4b55;
+  --ink-faint:    #7c7984;
+  --leather:      #262630;
+  --leather-2:    #191920;
+  --oxblood:      #6d1f27;
+  --oxblood-2:    #8b2d36;
+  --forest:       #2f3d44;
+  --gold:         #8b8a85;
+  --gold-2:       #b9b8b2;
+  --rule:         #9b968d;
+  --rule-soft:    #b4b0a8;
+  --shadow:       rgba(30,28,36,.34);
+  --stamp:        #6d1f27;
+  --board-color:  #2b2831;
+  background-image:
+    radial-gradient(120% 90% at 50% -10%, rgba(236,238,245,.30), transparent 60%),
+    radial-gradient(140% 120% at 50% 120%, rgba(24,22,32,.30), transparent 55%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.07'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark){
+  body[data-theme="gothic"]{
+    --paper:      #15151a;
+    --paper-2:    #1b1b21;
+    --paper-3:    #22222a;
+    --card:       #1f1f26;
+    --ink:        #d7d5dc;
+    --ink-soft:   #a9a6b2;
+    --ink-faint:  #7a7783;
+    --leather:    #0f0f14;
+    --leather-2:  #08080b;
+    --oxblood:    #8e3038;
+    --oxblood-2:  #a84049;
+    --forest:     #3c4e56;
+    --gold:       #9b9aa3;
+    --gold-2:     #cfcdd4;
+    --rule:       #454350;
+    --rule-soft:  #33313b;
+    --shadow:     rgba(0,0,0,.6);
+    --stamp:      #a84049;
+    --board-color:#101016;
+  }
+}
+
+/* 黒檀の棚では、頭の帯と釦も銀と鉛に寄せる */
+body[data-theme="gothic"] .brand{ color:#d9d8de; }
+body[data-theme="gothic"] .brand-name{ color:#e2e1e7; }
+body[data-theme="gothic"] .brand-sub{ color:#807d8a; }
+body[data-theme="gothic"] .brand-mark{ color:var(--gold-2); }
+body[data-theme="gothic"] .search{ background:rgba(226,224,232,.92); border-color:#4b4a57; }
+body[data-theme="gothic"] .search input{ color:#23222a; }
+body[data-theme="gothic"] .search input::placeholder{ color:#85838e; }
+body[data-theme="gothic"] .btn{
+  background:linear-gradient(180deg,#3c3b48,#2a2935);
+  border-color:#121118; color:#dcdae2;
+  box-shadow:0 1px 0 rgba(210,208,220,.12) inset, 0 2px 5px rgba(0,0,0,.4);
+}
+body[data-theme="gothic"] .btn:hover{ background:linear-gradient(180deg,#484655,#34333f); }
+body[data-theme="gothic"] .btn.ghost{ background:transparent; border-color:#56545f; color:#aeabb8; }
+body[data-theme="gothic"] .btn.ghost:hover{ background:rgba(220,218,230,.08); color:#d8d6e0; }
+body[data-theme="gothic"] .btn.primary{ background:linear-gradient(180deg,var(--oxblood-2),var(--oxblood)); border-color:#3d1116; }
+body[data-theme="gothic"] .nowplaying{ color:#d9d8de; }
+body[data-theme="gothic"] .np-name{ color:#e2e1e7; }
+body[data-theme="gothic"] .np-album{ color:#807d8a; }
+body[data-theme="gothic"] .np-ctrl button{ color:#b9b7c2; border-color:#56545f; }
+body[data-theme="gothic"] .toast{ color:#dcdae2; }
+body[data-theme="gothic"] .shelf-board{
+  background:linear-gradient(180deg,#3a3744,#201e27);
+  border-top-color:#514d5e;
+}
+body[data-theme="gothic"] .card::before{ opacity:.75; }

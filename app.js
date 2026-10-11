@@ -9,7 +9,19 @@ const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 /* ---------- 状態 ---------- */
-let state = { works: [], settings: { tategaki: false, size: 17, shelfMode: 'series', shelfLook: 'spine' } };
+let state = {
+  works: [],
+  shelves: [],          // [{ id, name, theme }]
+  current: '',          // いま開いている棚
+  settings: { tategaki: false, size: 17, shelfMode: 'series', shelfLook: 'spine' }
+};
+
+// 棚の装い
+const THEMES = [
+  { key: 'classic', name: '古　書', note: '羊皮紙と革、金の箔' },
+  { key: 'gothic',  name: '黒　檀', note: '黒檀と鉛、銀の箔' }
+];
+const themeOf = key => THEMES.find(t => t.key === key) || THEMES[0];
 let query = '';
 let deferredInstall = null;
 
@@ -20,14 +32,39 @@ function load() {
       const parsed = JSON.parse(raw);
       state.works = Array.isArray(parsed.works) ? parsed.works.map(normalize) : [];
       state.settings = Object.assign(state.settings, parsed.settings || {});
+      state.shelves = Array.isArray(parsed.shelves) ? parsed.shelves : [];
+      state.current = parsed.current || '';
       if (state.settings.shelfMode === 'timeline') state.settings.shelfMode = 'world';
     }
   } catch (e) { console.warn('蔵書の読み込みに失敗しました', e); }
+
+  // はじめて開いたときは、表と裏の二つの棚を建てる
+  if (!state.shelves.length) {
+    state.shelves = [
+      { id: 'omote', name: '表', theme: 'classic' },
+      { id: 'ura',   name: '裏', theme: 'gothic' }
+    ];
+  }
+  if (!state.shelves.some(s => s.id === state.current)) state.current = state.shelves[0].id;
+  // 棚を持たない蔵書は、はじめの棚に納める
+  const first = state.shelves[0].id;
+  for (const w of state.works) if (!w.shelf || !state.shelves.some(s => s.id === w.shelf)) w.shelf = first;
+}
+
+// いまの棚の蔵書だけを見る
+function lib() {
+  return state.works.filter(w => w.shelf === state.current);
+}
+function shelfNow() {
+  return state.shelves.find(s => s.id === state.current) || state.shelves[0];
 }
 
 function save() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ works: state.works, settings: state.settings, savedAt: Date.now() }));
+    localStorage.setItem(KEY, JSON.stringify({
+      works: state.works, shelves: state.shelves, current: state.current,
+      settings: state.settings, savedAt: Date.now()
+    }));
   } catch (e) {
     toast('保管に失敗しました（容量超過かもしれません）');
     console.error(e);
@@ -38,6 +75,7 @@ function normalize(w) {
   return {
     id: w.id || uid(),
     title: (w.title || '無題').trim(),
+    shelf: w.shelf || '',
     series: (w.series || '').trim(),
     order: (w.order === 0 || w.order) ? Number(w.order) : null,
     world: (w.world || w.timeline || '').trim(),
@@ -97,20 +135,36 @@ function hue(str) {
 // 背表紙の色。題名から決まるので、同じ本はいつも同じ色になる。
 // 落ち着いた（くすんだ）色に収まるよう、彩度と明度の幅を絞ってある。
 function spineTone(seed) {
-  const h = hue(seed) % 360;
-  const pale = hue(seed + '紙') % 6 === 0;          // 六冊に一冊ほど、生成りの背表紙
-  const hh = pale ? 32 + hue(seed + 'k') % 14 : h;  // 生成りは麻・象牙の色みに寄せる
-  const sat = pale ? 15 + hue(seed + 's') % 11 : 15 + hue(seed + 's') % 19;
-  const lit = pale ? 70 + hue(seed + 'l') % 9 : 23 + hue(seed + 'l') % 19;
+  const gothic = shelfNow().theme === 'gothic';
+  let hh, sat, lit, pale;
+
+  if (gothic) {
+    // 黒檀の棚：冷たく沈んだ色。七冊に一冊ほど、骨色の背表紙。
+    const COLD = [206, 220, 238, 258, 282, 302, 346, 168];
+    pale = hue(seed + '骨') % 7 === 0;
+    hh = pale ? 36 + hue(seed + 'k') % 10 : COLD[hue(seed + 'c') % COLD.length];
+    sat = pale ? 5 + hue(seed + 's') % 6 : 8 + hue(seed + 's') % 15;
+    lit = pale ? 57 + hue(seed + 'l') % 8 : 13 + hue(seed + 'l') % 14;
+  } else {
+    // 古書の棚：暖かくくすんだ色。六冊に一冊ほど、生成りの背表紙。
+    pale = hue(seed + '紙') % 6 === 0;
+    hh = pale ? 32 + hue(seed + 'k') % 14 : hue(seed) % 360;
+    sat = pale ? 15 + hue(seed + 's') % 11 : 15 + hue(seed + 's') % 19;
+    lit = pale ? 70 + hue(seed + 'l') % 9 : 23 + hue(seed + 'l') % 19;
+  }
+
+  const light = lit >= 50;
   return {
     bg: `hsl(${hh} ${sat}% ${lit}%)`,
-    fg: lit >= 55 ? 'rgba(40,30,20,.92)' : 'rgba(238,226,200,.94)',
-    band: lit >= 55 ? 'rgba(120,90,45,.55)' : 'rgba(201,169,97,.62)'
+    fg: light ? 'rgba(38,30,24,.92)' : (gothic ? 'rgba(222,224,230,.92)' : 'rgba(238,226,200,.94)'),
+    band: light
+      ? (gothic ? 'rgba(78,78,86,.6)' : 'rgba(120,90,45,.55)')
+      : (gothic ? 'rgba(196,200,210,.58)' : 'rgba(201,169,97,.62)')
   };
 }
 
 // 背表紙の天地に置く唐草飾り。題名から三種のうち一つが決まる。
-const ORNAMENTS = [
+const ORNAMENTS_CLASSIC = [
   // 菱形に葉を添えた飾り
   `<path d="M22 3.6 L26.6 9 L22 14.4 L17.4 9 Z"/>
    <circle cx="22" cy="9" r="1.5" fill="currentColor" stroke="none"/>
@@ -130,8 +184,27 @@ const ORNAMENTS = [
    <circle cx="22" cy="9" r="3.2"/>`
 ];
 
+// 黒檀の棚の飾り。尖頭と菱を使った、硬く尖った意匠。
+const ORNAMENTS_GOTHIC = [
+  // 尖頭アーチと細い罫
+  `<path d="M22 2.6 L27.4 10.4 V15.2 H16.6 V10.4 Z"/>
+   <path d="M13.6 9 H7.4"/><path d="M30.4 9 H36.6"/>
+   <path d="M5 7.4 V10.6"/><path d="M39 7.4 V10.6"/>`,
+  // 菱の連なり
+  `<path d="M22 4.2 L26.2 9 L22 13.8 L17.8 9 Z"/>
+   <path d="M12.8 6.4 L15.4 9 L12.8 11.6 L10.2 9 Z"/>
+   <path d="M31.2 6.4 L33.8 9 L31.2 11.6 L28.6 9 Z"/>
+   <circle cx="22" cy="9" r="1.3" fill="currentColor" stroke="none"/>`,
+  // 二連の尖頭
+  `<path d="M16 15.2 V10.2 L19 6 L22 10.2 V15.2"/>
+   <path d="M22 15.2 V10.2 L25 6 L28 10.2 V15.2"/>
+   <path d="M11.6 15.2 H32.4"/>
+   <circle cx="22" cy="3.8" r="1.2" fill="currentColor" stroke="none"/>`
+];
+
 function ornament(seed, flip) {
-  const d = ORNAMENTS[hue(seed + '飾') % ORNAMENTS.length];
+  const set = shelfNow().theme === 'gothic' ? ORNAMENTS_GOTHIC : ORNAMENTS_CLASSIC;
+  const d = set[hue(seed + '飾') % set.length];
   return `<svg class="orn${flip ? ' flip' : ''}" viewBox="0 0 44 18" preserveAspectRatio="xMidYMid meet" aria-hidden="true"
     fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 }
@@ -236,7 +309,7 @@ function posSort(a, b) {
   if (av == null && bv != null) return 1;
   return a.createdAt - b.createdAt;
 }
-function groups() { return groupList(state.works); }
+function groups() { return groupList(lib()); }
 
 function groupList(list) {
   const map = new Map();
@@ -258,7 +331,7 @@ function groupList(list) {
 // 一つの叢書を「区分ごとの束」に分ける（本編・後日談・番外編…）
 function worldSections(name) {
   const buckets = new Map();
-  for (const w of state.works) {
+  for (const w of lib()) {
     if (w.world !== name) continue;
     const k = w.kind || '本編';
     if (!buckets.has(k)) buckets.set(k, []);
@@ -301,7 +374,7 @@ function worldSequence(name) {
 function worldGroups() {
   const names = [];
   const rest = [];
-  for (const w of state.works) {
+  for (const w of lib()) {
     if (w.world) { if (!names.includes(w.world)) names.push(w.world); }
     else rest.push(w);
   }
@@ -342,14 +415,154 @@ function route() {
 function go(path) { location.hash = path; }
 
 /* ---------- 書架 ---------- */
+function applyTheme() {
+  document.body.dataset.theme = shelfNow().theme || 'classic';
+}
+
+// 棚の札。帳簿の見出し札のように並べる。
+function shelfTabs() {
+  return `
+    <div class="shelf-tabs" role="tablist">
+      ${state.shelves.map(sh => {
+        const n = state.works.filter(w => w.shelf === sh.id).length;
+        return `<button class="shelf-tab" role="tab" data-shelf="${esc(sh.id)}" aria-selected="${sh.id === state.current}">
+          <span class="tab-name">${esc(sh.name)}</span><span class="tab-n">${n}</span>
+        </button>`;
+      }).join('')}
+      <button class="shelf-tab setup" id="shelf-setup" title="棚の設え" aria-label="棚の設え">設　え</button>
+    </div>`;
+}
+
+function bindTabs() {
+  $$('[data-shelf]').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.shelf === state.current) return;
+    state.current = b.dataset.shelf;
+    save();
+    applyTheme();
+    go('/');
+    render();
+  }));
+  const st = $('#shelf-setup');
+  if (st) st.addEventListener('click', shelfDialog);
+}
+
+function shelfDialog() {
+  const sh = shelfNow();
+  const count = state.works.filter(w => w.shelf === sh.id).length;
+  const el = dialog(`
+    <h3>棚 の 設 え</h3>
+    <p>いま開いているのは「${esc(sh.name)}」の棚です（${count} 冊）。棚ごとに、名も装いも別に持てます。</p>
+    <div class="field">
+      <label for="sh-name">棚 の 名</label>
+      <input id="sh-name" value="${esc(sh.name)}" maxlength="12" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>装　い</label>
+      <div class="opt-row">
+        ${THEMES.map(t => `<button class="chip" data-theme="${t.key}" aria-pressed="${sh.theme === t.key}">${t.name}</button>`).join('')}
+      </div>
+      <span class="hint" id="sh-note">${esc(themeOf(sh.theme).note)}　·　本の背の色も、天地の飾りも、棚の装いに合わせて変わります。</span>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" id="sh-ok">決める</button>
+      <button class="btn" id="sh-add">棚を増やす</button>
+      <span class="spacer"></span>
+      ${state.shelves.length > 1 ? '<button class="btn danger" id="sh-del">この棚を捨てる</button>' : ''}
+    </div>`);
+
+  $$('[data-theme]', el).forEach(b => b.addEventListener('click', () => {
+    sh.theme = b.dataset.theme;
+    save();
+    applyTheme();
+    $$('[data-theme]', el).forEach(x => x.setAttribute('aria-pressed', String(x.dataset.theme === sh.theme)));
+    $('#sh-note', el).textContent = themeOf(sh.theme).note + '　·　本の背の色も、天地の飾りも、棚の装いに合わせて変わります。';
+    if (location.hash === '#/' || location.hash === '') renderShelf();
+  }));
+
+  $('#sh-ok', el).addEventListener('click', () => {
+    const name = $('#sh-name', el).value.trim();
+    if (name) sh.name = name.slice(0, 12);
+    save();
+    closeDialog();
+    render();
+  });
+
+  $('#sh-add', el).addEventListener('click', () => {
+    closeDialog();
+    promptDialog({
+      title: '棚を建てる',
+      desc: '新しい棚を建てます。連作も単巻も叢書も、棚ごとに別々に並びます。',
+      label: '棚 の 名',
+      value: '',
+      hint: '短い名が札に収まります（十二字まで）。',
+      okText: '建てる',
+      onOk: name => {
+        const sh2 = {
+          id: 'sh' + Date.now().toString(36),
+          name: (name || '新しい棚').slice(0, 12),
+          theme: THEMES[state.shelves.length % THEMES.length].key
+        };
+        state.shelves.push(sh2);
+        state.current = sh2.id;
+        save();
+        closeDialog();
+        applyTheme();
+        toast('「' + sh2.name + '」の棚を建てました');
+        go('/');
+        render();
+      }
+    });
+  });
+
+  const del = $('#sh-del', el);
+  if (del) del.addEventListener('click', () => {
+    const other = state.shelves.find(x => x.id !== sh.id);
+    confirmDialog('この棚を捨てますか',
+      count ? `「${sh.name}」の棚を取り除きます。中の ${count} 冊は「${other.name}」の棚へ移します。`
+            : `「${sh.name}」の棚を取り除きます。`,
+      () => {
+        for (const w of state.works) if (w.shelf === sh.id) w.shelf = other.id;
+        state.shelves = state.shelves.filter(x => x.id !== sh.id);
+        state.current = other.id;
+        save();
+        applyTheme();
+        toast('棚を捨てました');
+        go('/');
+        render();
+      });
+  });
+}
+
+// 連作や叢書を、まるごと別の棚へ
+function moveDialog(works, label) {
+  const others = state.shelves.filter(sh => sh.id !== state.current);
+  if (!others.length) return toast('ほかに棚がありません');
+  const el = dialog(`
+    <h3>別の棚へ移す</h3>
+    <p>「${esc(label)}」の <strong>${works.length} 編</strong>を、まるごと別の棚へ移します。中身はそのままです。</p>
+    <div class="opt-row">
+      ${others.map(sh => `<button class="btn" data-to="${esc(sh.id)}">「${esc(sh.name)}」の棚へ</button>`).join('')}
+    </div>
+    <div class="form-actions"><button class="btn ghost" data-close>やめる</button></div>`);
+  $$('[data-to]', el).forEach(b => b.addEventListener('click', () => {
+    for (const w of works) w.shelf = b.dataset.to;
+    save();
+    closeDialog();
+    toast(works.length + ' 編を移しました');
+    go('/');
+    render();
+  }));
+}
+
 function renderShelf() {
   const v = view();
   updateStat();
 
   if (query) return renderSearch();
 
-  if (!state.works.length) {
+  if (!lib().length) {
     v.innerHTML = `
+      ${shelfTabs()}
       <div class="empty">
         <div class="mark">❦</div>
         <h2>棚はまだ空のままです</h2>
@@ -361,6 +574,7 @@ function renderShelf() {
           <button class="btn ghost" onclick="location.hash='/archive'">書庫（取り込み・書き出し）</button>
         </div>
       </div>`;
+    bindTabs();
     return;
   }
 
@@ -368,7 +582,7 @@ function renderShelf() {
   const look = state.settings.shelfLook === 'card' ? 'card' : 'spine';
   const shelve = (items, cards) => look === 'spine' ? bookcaseOf(items.map(spineBook)) : shelfOf(cards);
 
-  let html = `
+  let html = shelfTabs() + `
     <div class="shelf-modes">
       <span class="modes-label">棚の並べ方</span>
       <button class="chip" data-mode="series" aria-pressed="${mode === 'series'}">連作・単巻</button>
@@ -415,6 +629,7 @@ function renderShelf() {
   v.innerHTML = html;
   bindCards();
   bindModes();
+  bindTabs();
 }
 
 function seriesItem(t) {
@@ -492,19 +707,33 @@ function bindCards() {
 }
 
 function renderSearch() {
-  const hits = state.works.filter(w => matches(w, query))
+  const hits = lib().filter(w => matches(w, query))
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  const elsewhere = state.shelves
+    .filter(sh => sh.id !== state.current)
+    .map(sh => ({ sh, n: state.works.filter(w => w.shelf === sh.id && matches(w, query)).length }))
+    .filter(x => x.n);
+
   view().innerHTML = `
-    <div class="section-head"><h2>検 索 目 録</h2><span class="count">「${esc(query)}」に ${hits.length} 件</span></div>
+    ${shelfTabs()}
+    <div class="section-head">
+      <h2>検 索 目 録</h2>
+      <span class="count">${esc(shelfNow().name)}　·　「${esc(query)}」に ${hits.length} 件</span>
+    </div>
     ${hits.length
       ? '<div class="shelf">' + hits.map(w => workCard(w)).join('') + '</div><div class="shelf-board"></div>'
-      : '<div class="empty"><div class="mark">❦</div><h2>該当する蔵書はありません</h2></div>'}`;
+      : '<div class="empty"><div class="mark">❦</div><h2>この棚には見当たりません</h2></div>'}
+    ${elsewhere.length ? `
+      <p class="note">ほかの棚にも見つかりました。
+        ${elsewhere.map(o => `<button class="chip" data-shelf="${esc(o.sh.id)}">${esc(o.sh.name)}　${o.n} 件</button>`).join('　')}
+      </p>` : ''}`;
   bindCards();
+  bindTabs();
 }
 
 /* ---------- シリーズ（目次） ---------- */
 function renderSeries(name) {
-  const works = state.works.filter(w => w.series === name).sort(sortInSeries);
+  const works = lib().filter(w => w.series === name).sort(sortInSeries);
   if (!works.length) return go('/');
   const total = works.reduce((n, w) => n + countChars(w.body), 0);
   const lede = works.find(w => w.summary)?.summary || '';
@@ -530,11 +759,13 @@ function renderSeries(name) {
       <button class="btn" onclick="location.hash='/new'">この連作に続きを納める</button>
       <button class="btn ghost" id="rename-series">連作名を改める</button>
       <button class="btn ghost" id="to-world">叢書に入れる</button>
+      ${state.shelves.length > 1 ? '<button class="btn ghost" id="to-shelf">別の棚へ移す</button>' : ''}
       <span class="spacer"></span>
       <button class="btn ghost" id="share-series">この連作を共有URLにする</button>
     </div>`;
   bindCards();
   $('#rename-series').addEventListener('click', () => renameGroup('series', name));
+  if ($('#to-shelf')) $('#to-shelf').addEventListener('click', () => moveDialog(works, name));
   $('#to-world').addEventListener('click', () => assignWorld(name));
   $('#share-series').addEventListener('click', () => shareDialog(works, name));
 }
@@ -571,6 +802,7 @@ function renderWorld(name) {
     <div class="form-actions" style="margin-top:24px">
       <button class="btn" onclick="location.hash='/new'">この叢書に一編を加える</button>
       <button class="btn ghost" id="rename-world">叢書名を改める</button>
+      ${state.shelves.length > 1 ? '<button class="btn ghost" id="to-shelf-w">別の棚へ移す</button>' : ''}
       <span class="spacer"></span>
       <button class="btn ghost" id="share-world">この叢書を共有URLにする</button>
     </div>`;
@@ -580,6 +812,7 @@ function renderWorld(name) {
     renderWorld(name);
   }));
   $('#rename-world').addEventListener('click', () => renameGroup('world', name));
+  if ($('#to-shelf-w')) $('#to-shelf-w').addEventListener('click', () => moveDialog(works, name));
   $('#share-world').addEventListener('click', () => shareDialog(works, name));
 }
 
@@ -614,10 +847,11 @@ function tocRow(w, label) {
 function renderReader(id) {
   const w = state.works.find(x => x.id === id);
   if (!w) return go('/');
+  if (w.shelf !== state.current) { state.current = w.shelf; save(); applyTheme(); }
   const useWorld = state.settings.shelfMode === 'world' && w.world;
   const sib = useWorld
     ? worldSequence(w.world)
-    : (w.series ? state.works.filter(x => x.series === w.series).sort(sortInSeries) : [w]);
+    : (w.series ? lib().filter(x => x.series === w.series).sort(sortInSeries) : [w]);
   const idx = sib.findIndex(x => x.id === w.id);
   const prev = sib[idx - 1], next = sib[idx + 1];
   const t = state.settings.tategaki;
@@ -684,9 +918,10 @@ function renderReader(id) {
 function renderEditor(id) {
   const w = id ? state.works.find(x => x.id === id) : null;
   if (id && !w) return go('/');
-  const seriesNames = Array.from(new Set(state.works.map(x => x.series).filter(Boolean)));
-  const worldNames = Array.from(new Set(state.works.flatMap(x => [x.world, x.series]).filter(Boolean)));
-  const kindNames = Array.from(new Set([...KINDS, ...state.works.map(x => x.kind).filter(Boolean)]));
+  if (w && w.shelf !== state.current) { state.current = w.shelf; save(); applyTheme(); }
+  const seriesNames = Array.from(new Set(lib().map(x => x.series).filter(Boolean)));
+  const worldNames = Array.from(new Set(lib().flatMap(x => [x.world, x.series]).filter(Boolean)));
+  const kindNames = Array.from(new Set([...KINDS, ...lib().map(x => x.kind).filter(Boolean)]));
 
   view().innerHTML = `
     <div class="breadcrumb"><button data-go="/">書架</button> ／ ${w ? '改訂' : '収蔵'}</div>
@@ -736,6 +971,12 @@ function renderEditor(id) {
       </div>
       <div class="row2">
         <div class="field">
+          <label for="f-shelf">納める棚</label>
+          <select id="f-shelf">
+            ${state.shelves.map(sh => `<option value="${esc(sh.id)}" ${((w?.shelf) || state.current) === sh.id ? 'selected' : ''}>${esc(sh.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
           <label for="f-author">著者・筆名</label>
           <input id="f-author" value="${esc(w?.author || '')}" placeholder="任意">
         </div>
@@ -774,6 +1015,7 @@ function renderEditor(id) {
       author: $('#f-author').value.trim(),
       tags: $('#f-tags').value.split(/[,、\s]+/).filter(Boolean),
       body: $('#f-body').value,
+      shelf: $('#f-shelf').value || w?.shelf || state.current,
       createdAt: w?.createdAt,
       updatedAt: Date.now()
     };
@@ -803,7 +1045,8 @@ function renderArchive() {
     <div class="plate">
       <div class="stamp">書庫<br>ARCHIVE</div>
       <h1>書　庫</h1>
-      <p class="meta">蔵書 ${state.works.length} 冊（連作 ${series.length} ／ 単巻 ${singles.length}） &middot; 総計 ${fmtCount(state.works.reduce((n, w) => n + countChars(w.body), 0))}</p>
+      <p class="meta">蔵書 ${state.works.length} 冊 &middot; 総計 ${fmtCount(state.works.reduce((n, w) => n + countChars(w.body), 0))}<br>
+      ${state.shelves.map(sh => esc(sh.name) + ' ' + state.works.filter(w => w.shelf === sh.id).length + ' 冊').join('　／　')}</p>
     </div>
     <div class="stack">
       <div class="panel">
@@ -945,6 +1188,7 @@ function parseProse(text, split) {
 
 function mergeWorks(works) {
   for (const w of works) {
+    if (!w.shelf || !state.shelves.some(s => s.id === w.shelf)) w.shelf = state.current;
     const i = state.works.findIndex(x => x.id === w.id);
     if (i >= 0) state.works[i] = w; else state.works.push(w);
   }
@@ -1093,8 +1337,8 @@ function promptDialog({ title, desc, label, value, options, hint, okText, onOk }
 function renameGroup(field, oldName) {
   const isSeries = field === 'series';
   const label = isSeries ? '連作名' : '叢書名';
-  const members = state.works.filter(w => w[field] === oldName);
-  const others = Array.from(new Set(state.works.map(w => w[field]).filter(v => v && v !== oldName)));
+  const members = lib().filter(w => w[field] === oldName);
+  const others = Array.from(new Set(lib().map(w => w[field]).filter(v => v && v !== oldName)));
 
   promptDialog({
     title: label + 'を改める',
@@ -1118,9 +1362,9 @@ function renameGroup(field, oldName) {
 
 // 連作まるごとを、ひとつの叢書に入れる
 function assignWorld(seriesName) {
-  const members = state.works.filter(w => w.series === seriesName);
+  const members = lib().filter(w => w.series === seriesName);
   const now = members.find(w => w.world)?.world || '';
-  const options = Array.from(new Set(state.works.flatMap(w => [w.world, w.series]).filter(Boolean)));
+  const options = Array.from(new Set(lib().flatMap(w => [w.world, w.series]).filter(Boolean)));
 
   promptDialog({
     title: 'この連作を叢書に入れる',
@@ -1156,12 +1400,13 @@ function confirmDialog(title, msg, onOk) {
    起動
    ============================================================= */
 function updateStat() {
-  const n = state.works.length;
-  const c = state.works.reduce((s, w) => s + countChars(w.body), 0);
+  const n = lib().length;
+  const c = lib().reduce((s, w) => s + countChars(w.body), 0);
   $('#stat').textContent = n ? `蔵書 ${n} 冊 ・ ${fmtCount(c)}` : '蔵書 0 冊';
 }
 
 function render() {
+  applyTheme();
   route();
   updateStat();
   const h = location.hash.replace(/^#/, '');
@@ -1229,6 +1474,7 @@ function init() {
     deferredInstall = null; $('#btn-install').hidden = true;
   });
 
+  applyTheme();
   Sound.init();
   handleImportHash().then(handled => { if (!handled) render(); else updateStat(); });
 
