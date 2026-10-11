@@ -268,6 +268,31 @@ function worldSections(name) {
   return kindOrder(Array.from(buckets.keys())).map(k => ({ kind: k, works: buckets.get(k) }));
 }
 
+// 区分の中を、連作ごとのまとまりに分ける。
+// 離れて現れた同じ連作は、先に出たまとまりに合流させる。
+function runsOf(list) {
+  const runs = [];
+  for (const w of list) {
+    const key = w.series || '';
+    const found = key ? runs.find(r => r.series === key) : null;
+    if (found) { found.works.push(w); continue; }
+    runs.push({ series: key, works: [w] });
+  }
+  return runs;
+}
+
+const foldKey = (world, series) => world + '␟' + series;
+function isFolded(world, series) {
+  return (state.settings.folded || []).includes(foldKey(world, series));
+}
+function toggleFold(world, series) {
+  const key = foldKey(world, series);
+  const list = state.settings.folded || (state.settings.folded = []);
+  const i = list.indexOf(key);
+  if (i >= 0) list.splice(i, 1); else list.push(key);
+  save();
+}
+
 // 叢書の中を、本編から後日談へと通して読む並び
 function worldSequence(name) {
   return worldSections(name).flatMap(sec => sec.works);
@@ -530,18 +555,19 @@ function renderWorld(name) {
       ${lede ? `<p class="lede">${esc(lede)}</p>` : ''}
       <p class="meta">全 ${works.length} 編 &middot; ${sections.map(sec => esc(sec.kind) + ' ' + sec.works.length).join(' ／ ')} &middot; ${fmtCount(total)}</p>
     </div>
-    ${sections.map(sec => `
-      <div class="section-head sub"><h2>${esc(sec.kind)}</h2><span class="count">${sec.works.length} 編</span></div>
-      <ul class="toc">
-        ${sec.works.map((w, i) => `
-          <li><button data-go="/w/${encodeURIComponent(w.id)}">
-            <span class="num">${w.order != null ? '第' + w.order + '話' : (w.pos != null ? esc(String(w.pos)) : String(i + 1).padStart(2, '0'))}</span>
-            <span class="stack-t">
-              <span class="ttl">${esc(w.title)}</span>
-              <span class="sub-inline">${w.series ? esc(w.series) : '単巻'} &middot; ${fmtCount(countChars(w.body))}</span>
-            </span>
-          </button></li>`).join('')}
-      </ul>`).join('')}
+    ${sections.map(sec => {
+      const runs = runsOf(sec.works);
+      const sets = runs.filter(r => r.series && r.works.length > 1).length;
+      return `
+      <div class="section-head sub">
+        <h2>${esc(sec.kind)}</h2>
+        <span class="count">${sec.works.length} 編${sets ? '（連作 ' + sets + '）' : ''}</span>
+      </div>
+      ${runs.map(run => run.series && run.works.length > 1
+        ? runBlock(name, run)
+        : `<ul class="toc">${run.works.map(w => tocRow(w, w.series ? esc(w.series) : '単巻')).join('')}</ul>`
+      ).join('')}`;
+    }).join('')}
     <div class="form-actions" style="margin-top:24px">
       <button class="btn" onclick="location.hash='/new'">この叢書に一編を加える</button>
       <button class="btn ghost" id="rename-world">叢書名を改める</button>
@@ -549,8 +575,39 @@ function renderWorld(name) {
       <button class="btn ghost" id="share-world">この叢書を共有URLにする</button>
     </div>`;
   bindCards();
+  $$('[data-fold]').forEach(b => b.addEventListener('click', () => {
+    toggleFold(name, b.dataset.fold);
+    renderWorld(name);
+  }));
   $('#rename-world').addEventListener('click', () => renameGroup('world', name));
   $('#share-world').addEventListener('click', () => shareDialog(works, name));
+}
+
+// 連作ひとまとまり（折り畳める）
+function runBlock(world, run) {
+  const folded = isFolded(world, run.series);
+  const chars = run.works.reduce((n, w) => n + countChars(w.body), 0);
+  return `
+    <div class="run" data-folded="${folded}">
+      <button class="run-head" data-fold="${esc(run.series)}" aria-expanded="${!folded}">
+        <span class="run-name">${esc(run.series)}</span>
+        <span class="run-count">連作 全${run.works.length}話 &middot; ${fmtCount(chars)}</span>
+        <span class="run-mark" aria-hidden="true">${folded ? '＋' : '−'}</span>
+      </button>
+      <ul class="toc">${run.works.map(w => tocRow(w, null)).join('')}</ul>
+    </div>`;
+}
+
+// 目次の一行
+function tocRow(w, label) {
+  return `
+    <li><button data-go="/w/${encodeURIComponent(w.id)}">
+      <span class="num">${w.order != null ? '第' + w.order + '話' : (w.pos != null ? esc(String(w.pos)) : '—')}</span>
+      <span class="stack-t">
+        <span class="ttl">${esc(w.title)}</span>
+        <span class="sub-inline">${label ? label + ' &middot; ' : ''}${fmtCount(countChars(w.body))}</span>
+      </span>
+    </button></li>`;
 }
 
 /* ---------- 閲覧 ---------- */
